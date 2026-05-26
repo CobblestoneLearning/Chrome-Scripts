@@ -1,0 +1,14 @@
+{
+  "name": "chrome-scripts-readme-generator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Generates README.md for Cobblestone Chrome-Scripts via the OpenAI API.",
+  "scripts": {
+    "generate": "node scripts/generate-readme.js"
+  },
+  "dependencies": {
+    "openai": "^4.73.0",
+    "terser": "^5.36.0"
+  }
+}

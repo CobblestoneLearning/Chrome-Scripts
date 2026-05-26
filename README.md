@@ -1,22 +1,18 @@
-# 🛠 Cobblestone Learning — Chrome Scripts
+# Chrome-Scripts
 
-Internal bookmarklets and DevTools snippets for web operations.
+A collection of browser bookmarklets and userscripts maintained by Cobblestone Learning.
 
----
+The script catalog below is regenerated automatically by GitHub Actions on every push to `main`. Everything above the `AUTO-GENERATED:START` marker is hand-maintained and safe to edit — the workflow only rewrites the block between the two sentinel comments.
 
-## 🖼 Image Extractor
+## How it works
 
-Scans any page for images, detects iStock IDs, filters by type, and bulk downloads.
+- Drop a `.js` file in the repo root and push to `main`.
+- The [Generate README](.github/workflows/generate-readme.yml) workflow asks OpenAI (`openai`, default model `gpt-4o-mini`) for a description and usage notes for any new or changed script, builds a minified `javascript:` bookmarklet, and rebuilds the **Scripts** section below.
+- Descriptions are cached in `.github/cache/script-descriptions.json` keyed by file content hash — unchanged scripts cost zero API calls on subsequent runs.
 
-**Install:**
-1. Right-click the bookmarks bar → **Add page**
-2. Name: `🖼 Image Extractor`
-3. URL: paste the bookmarklet below
+## Setup
 
-**Bookmarklet:**
+Add an `OPENAI_API_KEY` repository secret (Settings → Secrets and variables → Actions). Optionally override the model with an `OPENAI_MODEL` repo variable. The workflow uses the default `GITHUB_TOKEN` to commit the regenerated README, so no PAT is needed unless branch protection rules block bot pushes to `main`.
 
-    javascript:(function(){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/gh/CobblestoneLearning/REPONAME@main/ie-extractor.js?v='+Date.now();document.head.appendChild(s);})()
-
-**Source:** `ie-extractor.js`
-
----
+<!-- AUTO-GENERATED:START — do not edit below this line -->
+<!-- AUTO-GENERATED:END -->

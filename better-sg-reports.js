@@ -309,6 +309,7 @@
     };
     const CTRL_PRESETS = {
         auto: 'Auto (Top 5)',
+        network: 'Whole Network (every other active site)',
         unpatched: 'Unpatched (snn+einn)',
         lms_core: 'LMS Core 4',
         non_lms: 'Non-LMS'
@@ -1569,6 +1570,8 @@
         const active = data.siteStats.filter(s => s.domain !== target && s.total > 0 && !s.isExcluded);
         if (preset === 'auto')
             return active.slice(0, 5).map(s => s.domain);
+        if (preset === 'network')
+            return active.map(s => s.domain);
         if (preset === 'unpatched')
             return CFG.unpatched.filter(d => d !== target && data.domains.includes(d) && !isExcluded(d));
         if (preset === 'lms_core')
@@ -1633,6 +1636,73 @@
           , nAvgA = avgAll(nA);
         const targetPctCh = pctCh(tAvgB, tAvgA);
         const networkPctCh = pctCh(nAvgB, nAvgA);
+        // ── Three-lens summary: executions, CPU seconds, time-per-execution ────────
+        // Each lens computes total-in-window for target, control group, and network,
+        // then a % change before→after. Combined, the three lenses tell the full fix
+        // story: "traffic dropped, total CPU dropped MORE, AND per-request cost dropped"
+        // is the holy grail (real optimisation on top of less traffic). Variations:
+        //   - executions ↓ only            → blocked traffic, didn't fix code
+        //   - CPU sec ↓ but exec flat      → cheaper requests (good)
+        //   - CPU sec ↓ and exec ↓ equally → traffic drop only, ambiguous fix verdict
+        //   - cost/exec ↓ while exec ↑    → server got faster despite more load
+        // Comparing each lens against control and network distinguishes site-specific
+        // effects from account-wide ambient drift.
+        const sum = arr => arr.reduce( (s, v) => s + v, 0);
+        const ctrlECpu = (bDates_, doms) => bDates_.map(d => doms.reduce( (s, dd) => s + data.ev(dd, d), 0));
+        const cExecB = ctrlECpu(bDates, ctrlDoms)
+          , cExecA = ctrlECpu(aDates, ctrlDoms);
+        const nExecB = ctrlECpu(bDates, networkDoms)
+          , nExecA = ctrlECpu(aDates, networkDoms);
+        const safePctCh = (a, b) => (a > 0 && isFinite(a) && isFinite(b)) ? ((b - a) / a) * 100 : null;
+        const lenses = {
+            // Executions reduction: change in total request volume per group
+            exec: {
+                label: 'Executions',
+                unit: 'requests',
+                tip: 'program_executions',
+                tgtBefore: sum(eB),
+                tgtAfter: sum(eA),
+                tgtCh: safePctCh(sum(eB), sum(eA)),
+                ctrlBefore: sum(cExecB),
+                ctrlAfter: sum(cExecA),
+                ctrlCh: safePctCh(sum(cExecB), sum(cExecA)),
+                netBefore: sum(nExecB),
+                netAfter: sum(nExecA),
+                netCh: safePctCh(sum(nExecB), sum(nExecA))
+            },
+            // CPU seconds reduction: change in total work done per group
+            cpu: {
+                label: 'CPU Seconds',
+                unit: 'sec',
+                tip: 'cpu_seconds',
+                tgtBefore: sum(tB),
+                tgtAfter: sum(tA),
+                tgtCh: safePctCh(sum(tB), sum(tA)),
+                ctrlBefore: sum(cB),
+                ctrlAfter: sum(cA),
+                ctrlCh: safePctCh(sum(cB), sum(cA)),
+                netBefore: sum(nB),
+                netAfter: sum(nA),
+                netCh: safePctCh(sum(nB), sum(nA))
+            },
+            // Time-per-execution reduction: change in average per-request cost.
+            // sum(CPU) / sum(exec) is more honest than mean-of-daily-ratios because
+            // it weights heavy days correctly. Comparable across groups of any size.
+            perExec: {
+                label: 'Time per Execution',
+                unit: 'sec/req',
+                tip: 'cpu_exec_ratio',
+                tgtBefore: sum(eB) > 0 ? sum(tB) / sum(eB) : null,
+                tgtAfter: sum(eA) > 0 ? sum(tA) / sum(eA) : null,
+                ctrlBefore: sum(cExecB) > 0 ? sum(cB) / sum(cExecB) : null,
+                ctrlAfter: sum(cExecA) > 0 ? sum(cA) / sum(cExecA) : null,
+                netBefore: sum(nExecB) > 0 ? sum(nB) / sum(nExecB) : null,
+                netAfter: sum(nExecA) > 0 ? sum(nA) / sum(nExecA) : null
+            }
+        };
+        lenses.perExec.tgtCh = safePctCh(lenses.perExec.tgtBefore, lenses.perExec.tgtAfter);
+        lenses.perExec.ctrlCh = safePctCh(lenses.perExec.ctrlBefore, lenses.perExec.ctrlAfter);
+        lenses.perExec.netCh = safePctCh(lenses.perExec.netBefore, lenses.perExec.netAfter);
         // DiD net effect: target % change minus network % change. Negative = fix beat the network.
         const netEffectPct = (targetPctCh !== null && networkPctCh !== null) ? targetPctCh - networkPctCh : null;
         // Counterfactual: if the target had drifted with the network, where would after-CPU sit?
@@ -1912,10 +1982,15 @@
             desc: 'Highest single-day GB',
             hide: !data.hasMem
         }, ].filter(m => !m.hide);
+        // Excluded sites that would otherwise have been in the network — surfaced
+        // in the Before/After header so users can verify their exclusions are honoured.
+        const excludedFromNet = data.siteStats.filter(s => s.domain !== target && s.total > 0 && s.isExcluded).map(s => s.domain);
         return {
             metrics,
+            lenses,
             ctrlDoms,
             networkDoms,
+            excludedFromNet,
             bDates,
             aDates,
             tB,
@@ -1991,6 +2066,51 @@
             const ico = c.score >= 75 ? '✅' : c.score >= 50 ? '⚠️' : '🔴';
             const reasonsBit = c.reasons.length ? ` <em>Issues:</em> ${c.reasons.join('; ')}.` : '';
             parts.push(`${ico} <strong>Credibility: ${c.score}/100 (${c.verdict}).</strong>${reasonsBit}`);
+        }
+        // Three-lens narrative: did traffic drop, did total work drop, did per-request cost drop?
+        // The combination is the verdict. Per-exec moving differently from peers is the cleanest
+        // signal of an actual optimisation (vs. just less traffic happening to everyone).
+        if (cmp.lenses) {
+            const L = cmp.lenses;
+            const execCh = L.exec.tgtCh, cpuCh = L.cpu.tgtCh, perExCh = L.perExec.tgtCh;
+            const netPerEx = L.perExec.netCh;
+            // Classify the fix pattern from the three deltas
+            const movedDown = v => v !== null && v < -5;
+            const movedUp = v => v !== null && v > 5;
+            const flat = v => v !== null && Math.abs(v) <= 5;
+            let pattern, ico;
+            if (movedDown(execCh) && movedDown(perExCh)) {
+                pattern = `<strong>Traffic ${signStr(execCh)} AND per-request cost ${signStr(perExCh)}</strong> — best-case: fewer requests <em>and</em> each one cheaper. Pure optimisation win on top of reduced load.`;
+                ico = '✅';
+            } else if (flat(execCh) && movedDown(perExCh)) {
+                pattern = `<strong>Traffic flat, per-request cost ${signStr(perExCh)}</strong> — the holy-grail pattern: same volume, each hit now cheaper. This is what a code optimisation looks like.`;
+                ico = '✅';
+            } else if (movedDown(execCh) && flat(perExCh)) {
+                pattern = `<strong>Traffic ${signStr(execCh)}, per-request cost unchanged</strong> — you blocked requests rather than making them cheaper. Same code, less of it running.`;
+                ico = '⚠️';
+            } else if (movedDown(execCh) && movedUp(perExCh)) {
+                pattern = `<strong>Traffic ${signStr(execCh)} but per-request cost ${signStr(perExCh)}</strong> — cheap requests got blocked while expensive ones still run. Investigate which traffic was filtered.`;
+                ico = '🔴';
+            } else if (movedUp(execCh) && movedDown(perExCh)) {
+                pattern = `<strong>Traffic ${signStr(execCh)}, per-request cost ${signStr(perExCh)}</strong> — server got faster <em>despite</em> more load. Strongest optimisation signal possible.`;
+                ico = '✅';
+            } else if (movedUp(execCh) && movedUp(perExCh)) {
+                pattern = `<strong>Traffic and cost both rising</strong> (${signStr(execCh)} exec, ${signStr(perExCh)} per-request). Workload growing on every axis — capacity-planning territory.`;
+                ico = '🔴';
+            } else {
+                pattern = `Traffic ${execCh === null ? '—' : signStr(execCh)}, CPU ${cpuCh === null ? '—' : signStr(cpuCh)}, per-request cost ${perExCh === null ? '—' : signStr(perExCh)}. No dominant fix pattern.`;
+                ico = '→';
+            }
+            // Per-exec vs network — is the target's per-request cost moving differently from peers?
+            let peerBit = '';
+            if (perExCh !== null && netPerEx !== null) {
+                const did = perExCh - netPerEx;
+                if (did <= -10) peerBit = ` <strong>Target's per-request cost beat network by ${Math.abs(did).toFixed(0)} pp</strong> — site-specific optimisation, not account-wide drift.`;
+                else if (did < -5) peerBit = ` Target's per-request cost ${signStr(perExCh)} vs network ${signStr(netPerEx)} — modest peer-relative improvement.`;
+                else if (Math.abs(did) <= 5) peerBit = ` Target's per-request cost moved with the network (target ${signStr(perExCh)} vs network ${signStr(netPerEx)}) — likely shared infrastructure or ambient drift, not a site-specific fix.`;
+                else if (did > 5) peerBit = ` <strong>Target's per-request cost rose ${did.toFixed(0)} pp more than network</strong> — site-specific regression.`;
+            }
+            parts.push(`${ico} ${pattern}${peerBit}`);
         }
         // Lead with the difference-in-differences result — it's the single most credible "did the fix do anything?" answer.
         if (cmp.netEffectPct !== null && cmp.targetPctCh !== null && cmp.networkPctCh !== null) {
@@ -2388,6 +2508,24 @@ tr.incomplete td{opacity:.45}
 .net-hero .nh-pair .nh-num{font-size:22px;font-weight:800;line-height:1}
 .net-hero .nh-pair .nh-pc{font-size:13px;font-weight:700}
 @media (max-width: 760px){.net-hero{grid-template-columns:1fr;gap:10px}}
+.lens-row-strip{background:var(--bg-card);border:1px solid var(--border);border-top:var(--accent-bar);border-radius:var(--radius);padding:18px 22px;margin-bottom:var(--gap-cards);box-shadow:var(--shadow-hero)}
+.lens-strip-h{font-size:13px;font-weight:700;color:var(--text-strong);margin-bottom:14px;display:flex;align-items:baseline;flex-wrap:wrap;gap:10px}
+.lens-strip-sub{font-size:11px;font-weight:400;color:var(--text-muted);line-height:1.5;flex:1;min-width:280px}
+.lens-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.lens-card{background:var(--bg-card-alt);border:1px solid var(--border-faint);border-radius:var(--radius-sm);padding:14px 16px}
+.lens-card-h{font-size:11px;font-weight:700;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;display:flex;align-items:center;gap:5px}
+.lens-card-unit{color:var(--text-ghost);font-weight:500;text-transform:none;letter-spacing:0}
+.lens-card-hero{font-size:30px;font-weight:800;line-height:1;letter-spacing:-.02em;margin-bottom:4px}
+.lens-card-verdict{font-size:11.5px;color:var(--text-muted);line-height:1.5;margin-bottom:12px;padding-bottom:10px;border-bottom:1px dashed var(--border-faint)}
+.lens-rows{display:flex;flex-direction:column;gap:7px}
+.lens-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:baseline}
+.lens-row-lbl{font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lens-row-vals{display:flex;align-items:baseline;gap:6px}
+.lens-row-pair{font-size:11.5px;color:var(--text-strong);font-variant-numeric:tabular-nums;font-weight:600}
+.lens-row-ch{font-size:11.5px;font-weight:700;min-width:55px;text-align:right;font-variant-numeric:tabular-nums}
+@media (max-width: 980px){.lens-grid{grid-template-columns:1fr}}
+.excl-banner{background:var(--warn-bg);border:1px solid var(--warn-border);color:var(--warn);font-size:11.5px;padding:9px 14px;border-radius:var(--radius-sm);margin-bottom:var(--gap-cards);cursor:default}
+.excl-banner strong{color:var(--warn)}
 .rank-tbl tr.target td{background:var(--accent-bg);color:var(--text-strong);font-weight:600}
 .rank-tbl tr.target td:first-child{border-left:3px solid var(--accent);padding-left:9px}
 .rank-tbl td .rank-bar{display:inline-block;height:6px;border-radius:3px;background:var(--ok);vertical-align:middle;margin-left:6px;min-width:1px;max-width:120px}
@@ -4503,9 +4641,52 @@ svg.spark{display:inline-block;vertical-align:middle}
         }
         );
 
+        // ── Three-lens hero: Executions / CPU sec / Time per Execution ────────
+        // The user's mental model: "did traffic drop, did total work drop, did
+        // per-request cost drop?" Each lens compared independently across target,
+        // control group, and whole network. Read all three at once for the verdict.
+        const renderLens = (lens, fmtFn) => {
+            const tCh = lens.tgtCh, cCh = lens.ctrlCh, nCh = lens.netCh;
+            // Net effect for THIS lens vs the network — the isolation metric
+            const netDiD = (tCh !== null && nCh !== null) ? tCh - nCh : null;
+            const heroCls = netDiD === null ? 'cn' : netDiD <= -10 ? 'cg' : netDiD >= 10 ? 'cr' : Math.abs(netDiD) > 3 ? 'cw2' : 'cn';
+            const heroLbl = netDiD === null ? '—' : `${netDiD > 0 ? '+' : ''}${netDiD.toFixed(1)} pp`;
+            const row = (label, before, after, ch, badge) => {
+                const arrow = ch === null ? '→' : ch < 0 ? '↓' : ch > 0 ? '↑' : '→';
+                return `<div class="lens-row">
+          <div class="lens-row-lbl">${esc(label)}${badge || ''}</div>
+          <div class="lens-row-vals">
+            <span class="lens-row-pair">${before !== null ? fmtFn(before) : '—'} → ${after !== null ? fmtFn(after) : '—'}</span>
+            <span class="lens-row-ch ${clsCh(ch)}">${arrow} ${ch === null ? '—' : signStr(ch)}</span>
+          </div>
+        </div>`;
+            };
+            const verdict = netDiD === null ? 'Insufficient data' : netDiD <= -15 ? `✅ Target beat the network by ${Math.abs(netDiD).toFixed(0)} pp on this lens` : netDiD < -5 ? `⚠️ Modest peer-relative gain (${netDiD.toFixed(1)} pp)` : Math.abs(netDiD) <= 5 ? `→ Target moved with the network — no isolated effect` : `🔴 Target underperformed peers by ${netDiD.toFixed(1)} pp`;
+            return `<div class="lens-card">
+        <div class="lens-card-h">${tipIcon(lens.tip)} ${esc(lens.label)} <span class="lens-card-unit">(${esc(lens.unit)})</span></div>
+        <div class="lens-card-hero ${heroCls}">${heroLbl}</div>
+        <div class="lens-card-verdict">${verdict}</div>
+        <div class="lens-rows">
+          ${row('Target (' + target.split('.')[0] + ')', lens.tgtBefore, lens.tgtAfter, lens.tgtCh)}
+          ${row('Control (' + ctrlDoms.length + ' sites)', lens.ctrlBefore, lens.ctrlAfter, lens.ctrlCh)}
+          ${row('Network (' + cmp.networkDoms.length + ' sites)', lens.netBefore, lens.netAfter, lens.netCh)}
+        </div>
+      </div>`;
+        };
+        const lensesHtml = `<div class="lens-row-strip">
+      <div class="lens-strip-h">📐 Three-Lens Fix Verdict <span class="lens-strip-sub">Read all three to know whether traffic dropped, total CPU dropped, or each request got cheaper. The "net effect" is target minus network — the isolated, plan-immune, peer-relative reading.</span></div>
+      <div class="lens-grid">
+        ${renderLens(cmp.lenses.exec, fmtN)}
+        ${renderLens(cmp.lenses.cpu, fmtN)}
+        ${renderLens(cmp.lenses.perExec, v => fmtD(v, 3) + 's')}
+      </div>
+    </div>`;
+        const excludedHtml = cmp.excludedFromNet.length ? `<div class="excl-banner" data-tip="${esc('<strong>Excluded sites</strong> are dropped from every per-site calculation: control group, network, ranking, and DiD. ' + cmp.excludedFromNet.length + ' sites currently excluded: ' + cmp.excludedFromNet.join(', '))}"><span style="font-weight:700">🚫 ${cmp.excludedFromNet.length} sites excluded</span> from the network + ranking comparisons (managed in the Sites tab)</div>` : '';
         const summTxt = buildSummTxt(cmp, target, fixDate, ctrlDoms, interp);
         out.innerHTML = `
-    <div class="sbar"><strong>${esc(target)}</strong> &nbsp;·&nbsp; Fix: <strong>${esc(fixDate)}</strong> &nbsp;·&nbsp; Before: ${esc(cmp.bStart)}→${esc(cmp.bEnd)} (<strong>${cmp.bDates.length}</strong> days) &nbsp;·&nbsp; After: ${esc(cmp.aStart)}→${esc(cmp.aEnd)} (<strong>${cmp.aDates.length}</strong> days) &nbsp;·&nbsp; Control${ctrlPreset === 'auto' ? ' (frozen)' : ''}: <span style="color:#94a3b8">${esc(ctrlDoms.join(', '))}</span></div>
+    <div class="sbar"><strong>${esc(target)}</strong> &nbsp;·&nbsp; Fix: <strong>${esc(fixDate)}</strong> &nbsp;·&nbsp; Before: ${esc(cmp.bStart)}→${esc(cmp.bEnd)} (<strong>${cmp.bDates.length}</strong> days) &nbsp;·&nbsp; After: ${esc(cmp.aStart)}→${esc(cmp.aEnd)} (<strong>${cmp.aDates.length}</strong> days) &nbsp;·&nbsp; Control${ctrlPreset === 'auto' ? ' (frozen)' : ''} (${ctrlDoms.length}): <span style="color:#94a3b8">${esc(ctrlDoms.length > 6 ? ctrlDoms.slice(0, 6).join(', ') + ` +${ctrlDoms.length - 6} more` : ctrlDoms.join(', '))}</span></div>
+    ${excludedHtml}
+    ${lensesHtml}
     ${curStatHtml}
     ${credHtml}
     ${neHtml}
