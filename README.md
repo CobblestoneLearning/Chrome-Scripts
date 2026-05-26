@@ -15,21 +15,20 @@ The script catalog below is regenerated automatically by GitHub Actions on every
 Add an `OPENAI_API_KEY` repository secret (Settings → Secrets and variables → Actions). Optionally override the model with an `OPENAI_MODEL` repo variable. The workflow uses the default `GITHUB_TOKEN` to commit the regenerated README, so no PAT is needed unless branch protection rules block bot pushes to `main`.
 
 <!-- AUTO-GENERATED:START — do not edit below this line -->
-<!-- Last generated: 2026-05-26T18:26:33.668Z -->
+<!-- Last generated: 2026-05-26T19:09:27.862Z -->
 
 ## Scripts
 
 ### `better-sg-reports.js`
 
-This script creates a comprehensive, branded dashboard on SiteGround hosting accounts to analyze CPU, memory, and request data across sites. It helps users understand server load, site performance, and the effectiveness of fixes through interactive charts, comparisons, and detailed reports.
+This script creates a SiteGround performance dashboard for monitoring and analyzing server and site metrics. It fetches data, visualizes server health, site usage, and trend analysis, allowing users to generate reports and identify issues quickly.
 
 **Usage**
 
-- Open the SiteGround account's dashboard or statistics pages where the data can be intercepted.
-- Run the script in the browser console on a page showing SiteGround API responses or relevant statistics.
-- Wait until the dashboard UI appears, then use the provided tabs and controls to explore metrics, generate reports, or export data.
-- Ensure the necessary API responses are captured; the script intercepts fetch calls to gather data. It relies on specific SiteGround endpoints for accurate info.
-- For best results, wait 5–7 days after deploying a fix before analyzing results to avoid skewed data from partial days.
+- Open in the browser console on a SiteGround hosting dashboard page.
+- Run the bookmarklet to initialize and display the monitoring interface.
+- It automatically intercepts API responses to gather real-time data.
+- Use the UI buttons to navigate tabs, generate reports, or adjust settings.
 
 **jsDelivr URL** (paste into DevTools Console, or load via the bookmarklet below):
 
