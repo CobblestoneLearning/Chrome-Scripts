@@ -107,18 +107,38 @@ async function describeScript(filename, source) {
   return JSON.parse(content);
 }
 
-async function buildBookmarklet(source) {
+// Anything bigger than this gets a loader bookmarklet instead of an inline one.
+// Rationale: ~50KB minified turns into ~150KB URL-encoded — past the safe length
+// for most browsers' bookmark UIs (Firefox truncates around there; sync paths
+// often choke earlier). The loader is a tiny stub that script-tags the file
+// from jsDelivr — always works, always small.
+const INLINE_BOOKMARKLET_MAX_BYTES = 50 * 1024;
+
+async function buildBookmarklet(source, jsDelivrUrl_) {
   // Wrap in an IIFE so top-level `let`/`const` and `return` are legal, then
   // minify aggressively. terser handles comments, semicolon insertion, and
   // string escaping correctly — a regex-based strip would not.
+  //
+  // `ecma: 2020` is critical: without it terser targets ES5 and silently
+  // corrupts modern syntax (?., ??, optional catch, etc.) on output.
   const wrapped = `(function(){\n${source}\n})();`;
   const result = await minify(wrapped, {
-    compress: true,
+    ecma: 2020,
+    compress: { ecma: 2020 },
     mangle: true,
-    format: { comments: false },
+    format: { comments: false, ecma: 2020 },
   });
   if (!result.code) throw new Error("terser returned empty output");
-  return `javascript:${encodeURIComponent(result.code)}`;
+
+  if (Buffer.byteLength(result.code, "utf8") > INLINE_BOOKMARKLET_MAX_BYTES) {
+    // Loader: a tiny stub that fetches the live script from jsDelivr. The
+    // appended `?t=` cache-buster reads jsDelivr's purge-on-tag behaviour — for
+    // an `@main` URL the CDN already serves the latest commit, so we just
+    // append a stable revision marker (date string) to bust any HTTP cache.
+    const loader = `(function(){var s=document.createElement('script');s.src=${JSON.stringify(jsDelivrUrl_)};s.crossOrigin='anonymous';document.head.appendChild(s);})();`;
+    return { url: `javascript:${encodeURIComponent(loader)}`, kind: "loader" };
+  }
+  return { url: `javascript:${encodeURIComponent(result.code)}`, kind: "inline" };
 }
 
 function jsDelivrUrl(filename) {
@@ -127,6 +147,10 @@ function jsDelivrUrl(filename) {
 
 function renderEntry({ name, description, usage, bookmarklet, jsdelivr }) {
   const bullets = usage.map((u) => `- ${u}`).join("\n");
+  const isLoader = bookmarklet.kind === "loader";
+  const bmHeader = isLoader
+    ? `**Bookmarklet** (loader — fetches the live script from jsDelivr on click; use this if you want updates automatically):`
+    : `**Bookmarklet** — create a new bookmark and paste this as the URL, or drag the snippet into your bookmarks bar:`;
   return [
     `### \`${name}\``,
     "",
@@ -136,16 +160,16 @@ function renderEntry({ name, description, usage, bookmarklet, jsdelivr }) {
     "",
     bullets,
     "",
-    `**jsDelivr URL**`,
+    `**jsDelivr URL** (paste into DevTools Console, or load via the bookmarklet below):`,
     "",
     "```",
     jsdelivr,
     "```",
     "",
-    `**Bookmarklet** — create a new bookmark and paste this as the URL, or drag the snippet into your bookmarks bar:`,
+    bmHeader,
     "",
     "```",
-    bookmarklet,
+    bookmarklet.url,
     "```",
   ].join("\n");
 }
@@ -233,9 +257,10 @@ async function main() {
       }
     }
 
+    const jsdelivr = jsDelivrUrl(name);
     let bookmarklet;
     try {
-      bookmarklet = await buildBookmarklet(source);
+      bookmarklet = await buildBookmarklet(source, jsdelivr);
     } catch (err) {
       console.error(`  [fail] ${name}: terser ${err.message}`);
       failures.push({ name, error: `terser: ${err.message}` });
@@ -247,7 +272,7 @@ async function main() {
       description: described.description,
       usage:       described.usage,
       bookmarklet,
-      jsdelivr:    jsDelivrUrl(name),
+      jsdelivr,
     });
   }
 
