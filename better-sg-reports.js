@@ -307,12 +307,24 @@
         active: 'All Active',
         all: 'All Sites'
     };
+    // Comparison-group presets, ordered by how often you'll reach for them.
+    // - "auto" / "top3"/"top10" — quick CPU-ranked peer groups
+    // - "network" — every other active site (broadest baseline, hardest to argue against)
+    // - "smallest5" — peer with the long-tail sites (useful for low-traffic targets)
+    // - "cobble" — every *.cobblestonelearning.com (same brand, often shared codebase)
+    // - "unpatched" / "lms_core" / "non_lms" — Cobblestone-specific hardcoded groups
+    // - "custom" — picker modal (user chooses N specific sites)
     const CTRL_PRESETS = {
         auto: 'Auto (Top 5)',
+        top3: 'Top 3 by CPU',
+        top10: 'Top 10 by CPU',
+        smallest5: 'Smallest 5 active',
         network: 'Whole Network (every other active site)',
+        cobble: 'Cobblestone domains (*.cobblestonelearning.com)',
         unpatched: 'Unpatched (snn+einn)',
         lms_core: 'LMS Core 4',
-        non_lms: 'Non-LMS'
+        non_lms: 'Non-LMS',
+        custom: 'Custom — pick sites…'
     };
 
     const CAP = {
@@ -379,9 +391,24 @@
                     return new Set();
                 }
             }
+            )(),
+            // User-picked sites for the "Custom" comparison-group preset. Persisted.
+            customCtrl: (() => {
+                try {
+                    return JSON.parse(localStorage.getItem('sgd_custom_ctrl') || '[]');
+                } catch {
+                    return [];
+                }
+            }
             )()
         }
     };
+    const persistCustomCtrl = () => {
+        try {
+            localStorage.setItem('sgd_custom_ctrl', JSON.stringify(S.ui.customCtrl));
+        } catch {}
+    }
+    ;
     const persistExcluded = () => {
         try {
             localStorage.setItem('sgd_excluded', JSON.stringify([...S.ui.excludedSites]));
@@ -1567,17 +1594,28 @@
 
     const resolveCtrl = (data, target, preset) => {
         // Active candidates excludes the target itself, dead sites, and user-excluded sites.
+        // `siteStats` is pre-sorted descending by total CPU so .slice(0,N) picks heaviest peers.
         const active = data.siteStats.filter(s => s.domain !== target && s.total > 0 && !s.isExcluded);
         if (preset === 'auto')
             return active.slice(0, 5).map(s => s.domain);
+        if (preset === 'top3')
+            return active.slice(0, 3).map(s => s.domain);
+        if (preset === 'top10')
+            return active.slice(0, 10).map(s => s.domain);
+        if (preset === 'smallest5')
+            return active.slice(-5).map(s => s.domain);
         if (preset === 'network')
             return active.map(s => s.domain);
+        if (preset === 'cobble')
+            return active.filter(s => s.domain.endsWith('.cobblestonelearning.com')).map(s => s.domain);
         if (preset === 'unpatched')
             return CFG.unpatched.filter(d => d !== target && data.domains.includes(d) && !isExcluded(d));
         if (preset === 'lms_core')
             return CFG.lmsCore.filter(d => d !== target && data.domains.includes(d) && !isExcluded(d));
         if (preset === 'non_lms')
             return active.filter(s => !CFG.lmsCore.includes(s.domain)).slice(0, 5).map(s => s.domain);
+        if (preset === 'custom')
+            return (S.ui.customCtrl || []).filter(d => d !== target && data.domains.includes(d) && !isExcluded(d));
         return active.slice(0, 5).map(s => s.domain);
     }
     ;
@@ -2651,6 +2689,11 @@ svg.spark{display:inline-block;vertical-align:middle}
 .drill-stat .t{font-size:9.5px;color:var(--text-faint);font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
 .drill-stat .v{font-size:16px;font-weight:800;line-height:1;color:var(--text-strong)}
 .drill-stat .s{font-size:10px;color:var(--text-faint);margin-top:3px}
+.cust-row{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:7px 9px;border-radius:var(--radius-sm);cursor:pointer;font-size:11.5px;transition:background .12s}
+.cust-row:hover{background:var(--bg-card-alt)}
+.cust-row input{cursor:pointer;accent-color:var(--accent)}
+.cust-row .cust-nm{color:var(--text-strong);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cust-row .cust-cpu{color:var(--text-faint);font-variant-numeric:tabular-nums;font-size:10.5px}
 `;
 
     // ── SVG COMPONENTS ───────────────────────────────────────────────────────
@@ -4421,12 +4464,125 @@ svg.spark{display:inline-block;vertical-align:middle}
       <div class="fld"><label>Fix Date ${tipIcon('fix_date')}</label><input type="date" id="cmp-fix" value="${S.ui.fixDate}"></div>
       <div class="fld"><label>Days Before</label><input type="number" id="cmp-before" value="${S.ui.daysBefore}" min="1" max="60" style="width:57px"></div>
       <div class="fld"><label>Days After</label><input type="number" id="cmp-after" value="${S.ui.daysAfter}" min="1" max="60" style="width:57px"></div>
-      <div class="fld"><label>Control ${tipIcon('control_group')}</label><select id="cmp-ctrl">${cOpts}</select></div>
+      <div class="fld"><label>Compare Against ${tipIcon('control_group')}</label><select id="cmp-ctrl">${cOpts}</select></div>
       <button class="btn" data-a="run-cmp">Run Analysis</button>
       <button class="btn sec" data-a="gen-report" data-tip="${esc('Open a Cobblestone-branded, print-ready PDF version of this analysis in a new tab. Save-as-PDF from your browser\'s print dialog.')}">📄 Generate Branded Report</button>
     </div>
     <div id="cmp-out"></div>`;
+        // Auto-rerun on any input change. `change` covers selects + date pickers;
+        // `input` is more responsive for number fields. Both call the same renderer
+        // — buildCmp is fast enough (sub-50ms even on big accounts) to re-render
+        // every keystroke without lag.
+        const rerun = () => renderCmpOut(data);
+        ['cmp-tgt', 'cmp-fix'].forEach(id => {
+            document.getElementById(id)?.addEventListener('change', rerun);
+        }
+        );
+        // Control preset gets a wrapper so picking "Custom" opens the picker first.
+        document.getElementById('cmp-ctrl')?.addEventListener('change', e => {
+            if (e.target.value === 'custom') {
+                openCustomCtrlPicker(data, rerun);
+            } else {
+                rerun();
+            }
+        }
+        );
+        ['cmp-before', 'cmp-after'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener('change', rerun);
+                el.addEventListener('input', rerun);
+            }
+        }
+        );
         renderCmpOut(data);
+    }
+    ;
+
+    // Modal picker for the "Custom" comparison-group preset. Checkbox list of every
+    // active site, sorted by CPU (heaviest first). Selection persisted to S.ui.customCtrl
+    // and to localStorage so it survives reloads. Calls `onApply` when the user clicks Apply.
+    // Cancel/backdrop click reverts the dropdown to the previously-applied preset.
+    const openCustomCtrlPicker = (data, onApply) => {
+        document.getElementById('sgd-custom-overlay')?.remove();
+        const target = document.getElementById('cmp-tgt')?.value || S.ui.target;
+        const sites = data.siteStats.filter(s => s.total > 0 && s.domain !== target);
+        const picked = new Set(S.ui.customCtrl || []);
+        const rows = sites.map(s => `
+      <label class="cust-row">
+        <input type="checkbox" data-d="${esc(s.domain)}" ${picked.has(s.domain) ? 'checked' : ''}>
+        <span class="cust-nm">${esc(s.domain)}${s.isExcluded ? ' <span style="color:var(--warn);font-size:10px">(excluded)</span>' : ''}</span>
+        <span class="cust-cpu">${fmtN(s.total)} CPU sec · ${fmtD(s.shareOfAccount, 1)}%</span>
+      </label>`).join('');
+        const overlay = document.createElement('div');
+        overlay.id = 'sgd-custom-overlay';
+        overlay.className = 'drill-overlay';
+        overlay.setAttribute('data-theme', S.ui.theme);
+        overlay.innerHTML = `
+      <div class="drill-modal" style="max-width:560px;padding:22px 26px">
+        <div class="drill-hdr">
+          <h3 style="font-family:inherit">Pick comparison sites</h3>
+          <button class="btn sec sm" id="sgd-custom-cancel">✕</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+          <input type="text" id="sgd-custom-search" placeholder="Search sites…" style="flex:1;padding:7px 11px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-card-alt);color:var(--text-strong);font-size:12px">
+          <button class="btn sec sm" id="sgd-custom-none">None</button>
+          <button class="btn sec sm" id="sgd-custom-all">All</button>
+        </div>
+        <div id="sgd-custom-list" style="max-height:50vh;overflow-y:auto;padding-right:6px">${rows}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+          <span style="font-size:11.5px;color:var(--text-faint)" id="sgd-custom-count">${picked.size} selected</span>
+          <button class="btn" id="sgd-custom-apply">Apply</button>
+        </div>
+      </div>`;
+        document.body.appendChild(overlay);
+        const list = overlay.querySelector('#sgd-custom-list');
+        const countEl = overlay.querySelector('#sgd-custom-count');
+        const updateCount = () => {
+            countEl.textContent = `${list.querySelectorAll('input:checked').length} selected`;
+        }
+        ;
+        list.addEventListener('change', updateCount);
+        overlay.querySelector('#sgd-custom-all').addEventListener('click', () => {
+            list.querySelectorAll('input').forEach(c => {
+                if (c.closest('.cust-row').style.display !== 'none') c.checked = true;
+            }
+            );
+            updateCount();
+        }
+        );
+        overlay.querySelector('#sgd-custom-none').addEventListener('click', () => {
+            list.querySelectorAll('input').forEach(c => c.checked = false);
+            updateCount();
+        }
+        );
+        overlay.querySelector('#sgd-custom-search').addEventListener('input', e => {
+            const q = e.target.value.toLowerCase();
+            list.querySelectorAll('.cust-row').forEach(r => {
+                r.style.display = r.querySelector('.cust-nm').textContent.toLowerCase().includes(q) ? '' : 'none';
+            }
+            );
+        }
+        );
+        const revertAndClose = () => {
+            const ctrl = document.getElementById('cmp-ctrl');
+            if (ctrl) ctrl.value = S.ui.ctrlPreset || 'auto';
+            overlay.remove();
+        }
+        ;
+        overlay.querySelector('#sgd-custom-cancel').addEventListener('click', revertAndClose);
+        overlay.addEventListener('click', e => {
+            if (e.target === overlay) revertAndClose();
+        }
+        );
+        overlay.querySelector('#sgd-custom-apply').addEventListener('click', () => {
+            S.ui.customCtrl = [...list.querySelectorAll('input:checked')].map(c => c.dataset.d);
+            S.ui.ctrlPreset = 'custom';
+            persistCustomCtrl();
+            overlay.remove();
+            onApply();
+        }
+        );
     }
     ;
 
@@ -4642,39 +4798,50 @@ svg.spark{display:inline-block;vertical-align:middle}
         );
 
         // ── Three-lens hero: Executions / CPU sec / Time per Execution ────────
-        // The user's mental model: "did traffic drop, did total work drop, did
-        // per-request cost drop?" Each lens compared independently across target,
-        // control group, and whole network. Read all three at once for the verdict.
+        // Two peer rows: the user's *selected* group (whatever's in the dropdown)
+        // and the *whole network* baseline (always every other active site, for the
+        // hardest-to-argue-against DiD reading). When the user picks "Whole Network"
+        // as their group, the two rows would be identical, so we collapse to one.
+        const ctrlIsNetwork = ctrlDoms.length === cmp.networkDoms.length
+            && ctrlDoms.every(d => cmp.networkDoms.includes(d));
+        const ctrlLabel = ({
+            auto: 'Auto Top 5', top3: 'Top 3', top10: 'Top 10',
+            smallest5: 'Smallest 5', network: 'Whole Network',
+            cobble: 'Cobblestone domains', unpatched: 'Unpatched',
+            lms_core: 'LMS Core 4', non_lms: 'Non-LMS', custom: 'Custom'
+        })[ctrlPreset] || 'Selected';
         const renderLens = (lens, fmtFn) => {
-            const tCh = lens.tgtCh, cCh = lens.ctrlCh, nCh = lens.netCh;
-            // Net effect for THIS lens vs the network — the isolation metric
+            const tCh = lens.tgtCh, nCh = lens.netCh;
+            // Net effect uses the WHOLE NETWORK as baseline regardless of which
+            // group the user picked — that's the consistent, statistically-robust
+            // reference. The selected group is shown for context, not as the test.
             const netDiD = (tCh !== null && nCh !== null) ? tCh - nCh : null;
             const heroCls = netDiD === null ? 'cn' : netDiD <= -10 ? 'cg' : netDiD >= 10 ? 'cr' : Math.abs(netDiD) > 3 ? 'cw2' : 'cn';
             const heroLbl = netDiD === null ? '—' : `${netDiD > 0 ? '+' : ''}${netDiD.toFixed(1)} pp`;
-            const row = (label, before, after, ch, badge) => {
+            const row = (label, before, after, ch) => {
                 const arrow = ch === null ? '→' : ch < 0 ? '↓' : ch > 0 ? '↑' : '→';
                 return `<div class="lens-row">
-          <div class="lens-row-lbl">${esc(label)}${badge || ''}</div>
+          <div class="lens-row-lbl">${esc(label)}</div>
           <div class="lens-row-vals">
             <span class="lens-row-pair">${before !== null ? fmtFn(before) : '—'} → ${after !== null ? fmtFn(after) : '—'}</span>
             <span class="lens-row-ch ${clsCh(ch)}">${arrow} ${ch === null ? '—' : signStr(ch)}</span>
           </div>
         </div>`;
             };
-            const verdict = netDiD === null ? 'Insufficient data' : netDiD <= -15 ? `✅ Target beat the network by ${Math.abs(netDiD).toFixed(0)} pp on this lens` : netDiD < -5 ? `⚠️ Modest peer-relative gain (${netDiD.toFixed(1)} pp)` : Math.abs(netDiD) <= 5 ? `→ Target moved with the network — no isolated effect` : `🔴 Target underperformed peers by ${netDiD.toFixed(1)} pp`;
+            const verdict = netDiD === null ? 'Insufficient data' : netDiD <= -15 ? `✅ Target beat the network by ${Math.abs(netDiD).toFixed(0)} pp` : netDiD < -5 ? `⚠️ Modest peer-relative gain (${netDiD.toFixed(1)} pp)` : Math.abs(netDiD) <= 5 ? `→ Target moved with the network — no isolated effect` : `🔴 Target underperformed peers by ${netDiD.toFixed(1)} pp`;
             return `<div class="lens-card">
         <div class="lens-card-h">${tipIcon(lens.tip)} ${esc(lens.label)} <span class="lens-card-unit">(${esc(lens.unit)})</span></div>
         <div class="lens-card-hero ${heroCls}">${heroLbl}</div>
         <div class="lens-card-verdict">${verdict}</div>
         <div class="lens-rows">
           ${row('Target (' + target.split('.')[0] + ')', lens.tgtBefore, lens.tgtAfter, lens.tgtCh)}
-          ${row('Control (' + ctrlDoms.length + ' sites)', lens.ctrlBefore, lens.ctrlAfter, lens.ctrlCh)}
-          ${row('Network (' + cmp.networkDoms.length + ' sites)', lens.netBefore, lens.netAfter, lens.netCh)}
+          ${ctrlIsNetwork ? '' : row(`${ctrlLabel} (${ctrlDoms.length} site${ctrlDoms.length === 1 ? '' : 's'})`, lens.ctrlBefore, lens.ctrlAfter, lens.ctrlCh)}
+          ${row('Whole Network (' + cmp.networkDoms.length + ' sites)', lens.netBefore, lens.netAfter, lens.netCh)}
         </div>
       </div>`;
         };
         const lensesHtml = `<div class="lens-row-strip">
-      <div class="lens-strip-h">📐 Three-Lens Fix Verdict <span class="lens-strip-sub">Read all three to know whether traffic dropped, total CPU dropped, or each request got cheaper. The "net effect" is target minus network — the isolated, plan-immune, peer-relative reading.</span></div>
+      <div class="lens-strip-h">📐 Three-Lens Fix Verdict <span class="lens-strip-sub">Read all three to know whether traffic dropped, total CPU dropped, or each request got cheaper. The big "pp" number is target's % change minus the whole network's — the isolated, plan-immune, peer-relative reading.${ctrlIsNetwork ? ' Your selected group IS the whole network, so only one peer row is shown.' : ` Your selected group (${esc(ctrlLabel)}) is shown for context alongside the network baseline.`}</span></div>
       <div class="lens-grid">
         ${renderLens(cmp.lenses.exec, fmtN)}
         ${renderLens(cmp.lenses.cpu, fmtN)}
