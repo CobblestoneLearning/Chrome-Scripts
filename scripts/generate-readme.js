@@ -28,7 +28,10 @@ const REQUEST_DELAY_MS = 250;
 // ---- OpenAI client ----------------------------------------------------------
 
 const client = new OpenAI(); // reads OPENAI_API_KEY
-const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+// gpt-4.1-nano: 1M context, ~$0.10/1M input tokens. Cheaper than gpt-4o-mini
+// (which caps at 128K context and chokes on scripts above ~300KB). Override
+// via the OPENAI_MODEL repo variable if you want a beefier/cheaper model.
+const MODEL = process.env.OPENAI_MODEL ?? "gpt-4.1-nano";
 
 const SYSTEM_PROMPT = `You document browser bookmarklets and userscripts for a public README.
 
