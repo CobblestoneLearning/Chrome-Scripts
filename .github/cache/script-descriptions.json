@@ -1,14 +1,13 @@
 {
   "better-sg-reports.js": {
-    "description": "This script creates a comprehensive, branded dashboard on SiteGround hosting accounts to analyze CPU, memory, and request data across sites. It helps users understand server load, site performance, and the effectiveness of fixes through interactive charts, comparisons, and detailed reports.",
+    "description": "This script creates a SiteGround performance dashboard for monitoring and analyzing server and site metrics. It fetches data, visualizes server health, site usage, and trend analysis, allowing users to generate reports and identify issues quickly.",
     "usage": [
-      "Open the SiteGround account's dashboard or statistics pages where the data can be intercepted.",
-      "Run the script in the browser console on a page showing SiteGround API responses or relevant statistics.",
-      "Wait until the dashboard UI appears, then use the provided tabs and controls to explore metrics, generate reports, or export data.",
-      "Ensure the necessary API responses are captured; the script intercepts fetch calls to gather data. It relies on specific SiteGround endpoints for accurate info.",
-      "For best results, wait 5–7 days after deploying a fix before analyzing results to avoid skewed data from partial days."
+      "Open in the browser console on a SiteGround hosting dashboard page.",
+      "Run the bookmarklet to initialize and display the monitoring interface.",
+      "It automatically intercepts API responses to gather real-time data.",
+      "Use the UI buttons to navigate tabs, generate reports, or adjust settings."
     ],
-    "hash": "183969915038ee33601c6411a2394249784316b4d9ed1708218696b622c34fb2"
+    "hash": "97419dbd04570811978dd77b07d8346457b2e20e19360799a8c506f78e01bb18"
   },
   "ie-extractor.js": {
     "description": "This script creates a floating image extractor panel on any page, which collects all images, detects if they are from iStock, and displays them in a sortable table. You can filter images by filename, alt text, or iStock ID, select images, and download their files directly. It enhances image management without altering page content permanently.",
