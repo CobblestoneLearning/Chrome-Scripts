@@ -1675,10 +1675,12 @@
         const targetPctCh = pctCh(tAvgB, tAvgA);
         const networkPctCh = pctCh(nAvgB, nAvgA);
         // ── Three-lens summary: executions, CPU seconds, time-per-execution ────────
-        // Each lens computes total-in-window for target, control group, and network,
-        // then a % change before→after. Combined, the three lenses tell the full fix
-        // story: "traffic dropped, total CPU dropped MORE, AND per-request cost dropped"
-        // is the holy grail (real optimisation on top of less traffic). Variations:
+        // Each lens computes the "per day" metric for target, control group, and network,
+        // then a % change before→after. Per-day averaging is critical: if the user picks
+        // 14d-before / 7d-after, sum-over-window would falsely report -50% even when
+        // daily traffic was identical. Averages are window-length-independent.
+        //
+        // Combined, the three lenses tell the full fix story:
         //   - executions ↓ only            → blocked traffic, didn't fix code
         //   - CPU sec ↓ but exec flat      → cheaper requests (good)
         //   - CPU sec ↓ and exec ↓ equally → traffic drop only, ambiguous fix verdict
@@ -1686,46 +1688,40 @@
         // Comparing each lens against control and network distinguishes site-specific
         // effects from account-wide ambient drift.
         const sum = arr => arr.reduce( (s, v) => s + v, 0);
-        const ctrlECpu = (bDates_, doms) => bDates_.map(d => doms.reduce( (s, dd) => s + data.ev(dd, d), 0));
-        const cExecB = ctrlECpu(bDates, ctrlDoms)
-          , cExecA = ctrlECpu(aDates, ctrlDoms);
-        const nExecB = ctrlECpu(bDates, networkDoms)
-          , nExecA = ctrlECpu(aDates, networkDoms);
+        const groupExec = (dates_, doms) => dates_.map(d => doms.reduce( (s, dd) => s + data.ev(dd, d), 0));
+        const cExecB = groupExec(bDates, ctrlDoms)
+          , cExecA = groupExec(aDates, ctrlDoms);
+        const nExecB = groupExec(bDates, networkDoms)
+          , nExecA = groupExec(aDates, networkDoms);
         const safePctCh = (a, b) => (a > 0 && isFinite(a) && isFinite(b)) ? ((b - a) / a) * 100 : null;
         const lenses = {
-            // Executions reduction: change in total request volume per group
+            // Executions: AVG daily request volume per group.
             exec: {
-                label: 'Executions',
+                label: 'Executions / day',
                 unit: 'requests',
                 tip: 'program_executions',
-                tgtBefore: sum(eB),
-                tgtAfter: sum(eA),
-                tgtCh: safePctCh(sum(eB), sum(eA)),
-                ctrlBefore: sum(cExecB),
-                ctrlAfter: sum(cExecA),
-                ctrlCh: safePctCh(sum(cExecB), sum(cExecA)),
-                netBefore: sum(nExecB),
-                netAfter: sum(nExecA),
-                netCh: safePctCh(sum(nExecB), sum(nExecA))
+                tgtBefore: avgAll(eB),
+                tgtAfter: avgAll(eA),
+                ctrlBefore: avgAll(cExecB),
+                ctrlAfter: avgAll(cExecA),
+                netBefore: avgAll(nExecB),
+                netAfter: avgAll(nExecA)
             },
-            // CPU seconds reduction: change in total work done per group
+            // CPU seconds: AVG daily CPU consumed per group.
             cpu: {
-                label: 'CPU Seconds',
+                label: 'CPU Seconds / day',
                 unit: 'sec',
                 tip: 'cpu_seconds',
-                tgtBefore: sum(tB),
-                tgtAfter: sum(tA),
-                tgtCh: safePctCh(sum(tB), sum(tA)),
-                ctrlBefore: sum(cB),
-                ctrlAfter: sum(cA),
-                ctrlCh: safePctCh(sum(cB), sum(cA)),
-                netBefore: sum(nB),
-                netAfter: sum(nA),
-                netCh: safePctCh(sum(nB), sum(nA))
+                tgtBefore: avgAll(tB),
+                tgtAfter: avgAll(tA),
+                ctrlBefore: avgAll(cB),
+                ctrlAfter: avgAll(cA),
+                netBefore: avgAll(nB),
+                netAfter: avgAll(nA)
             },
-            // Time-per-execution reduction: change in average per-request cost.
-            // sum(CPU) / sum(exec) is more honest than mean-of-daily-ratios because
-            // it weights heavy days correctly. Comparable across groups of any size.
+            // Time-per-execution: sum(CPU) / sum(exec) is window-length-independent by
+            // construction (ratio of totals = weighted average per-exec cost). More honest
+            // than mean-of-daily-ratios because heavy-traffic days get appropriate weight.
             perExec: {
                 label: 'Time per Execution',
                 unit: 'sec/req',
@@ -1738,9 +1734,13 @@
                 netAfter: sum(nExecA) > 0 ? sum(nA) / sum(nExecA) : null
             }
         };
-        lenses.perExec.tgtCh = safePctCh(lenses.perExec.tgtBefore, lenses.perExec.tgtAfter);
-        lenses.perExec.ctrlCh = safePctCh(lenses.perExec.ctrlBefore, lenses.perExec.ctrlAfter);
-        lenses.perExec.netCh = safePctCh(lenses.perExec.netBefore, lenses.perExec.netAfter);
+        // Derive % changes consistently for every lens.
+        for (const k of ['exec', 'cpu', 'perExec']) {
+            const L = lenses[k];
+            L.tgtCh = safePctCh(L.tgtBefore, L.tgtAfter);
+            L.ctrlCh = safePctCh(L.ctrlBefore, L.ctrlAfter);
+            L.netCh = safePctCh(L.netBefore, L.netAfter);
+        }
         // DiD net effect: target % change minus network % change. Negative = fix beat the network.
         const netEffectPct = (targetPctCh !== null && networkPctCh !== null) ? targetPctCh - networkPctCh : null;
         // Counterfactual: if the target had drifted with the network, where would after-CPU sit?
