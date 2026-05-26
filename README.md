@@ -15,20 +15,21 @@ The script catalog below is regenerated automatically by GitHub Actions on every
 Add an `OPENAI_API_KEY` repository secret (Settings → Secrets and variables → Actions). Optionally override the model with an `OPENAI_MODEL` repo variable. The workflow uses the default `GITHUB_TOKEN` to commit the regenerated README, so no PAT is needed unless branch protection rules block bot pushes to `main`.
 
 <!-- AUTO-GENERATED:START — do not edit below this line -->
-<!-- Last generated: 2026-05-26T16:03:45.122Z -->
+<!-- Last generated: 2026-05-26T18:26:33.668Z -->
 
 ## Scripts
 
 ### `better-sg-reports.js`
 
-This script creates a browser overlay to display detailed SiteGround hosting reports, including server health, site usage, performance trends, and a branded PDF report generator. It is used to visualize and analyze server metrics directly from the SiteGround control panel.
+This script creates a comprehensive, branded dashboard on SiteGround hosting accounts to analyze CPU, memory, and request data across sites. It helps users understand server load, site performance, and the effectiveness of fixes through interactive charts, comparisons, and detailed reports.
 
 **Usage**
 
-- Open a SiteGround dashboard containing API data about server CPU, memory, and site stats.
-- Run the script directly on the page; it will inject a full-featured overlay with charts and reports.
-- Use the provided buttons to generate PDF reports, export CSV data, or view comparisons and trends.
-- Ensure pop-ups are not blocked; the script automatically handles data collection and visualization.
+- Open the SiteGround account's dashboard or statistics pages where the data can be intercepted.
+- Run the script in the browser console on a page showing SiteGround API responses or relevant statistics.
+- Wait until the dashboard UI appears, then use the provided tabs and controls to explore metrics, generate reports, or export data.
+- Ensure the necessary API responses are captured; the script intercepts fetch calls to gather data. It relies on specific SiteGround endpoints for accurate info.
+- For best results, wait 5–7 days after deploying a fix before analyzing results to avoid skewed data from partial days.
 
 **jsDelivr URL** (paste into DevTools Console, or load via the bookmarklet below):
 
