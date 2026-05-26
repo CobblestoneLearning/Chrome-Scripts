@@ -1,0 +1,22 @@
+{
+  "better-sg-reports.js": {
+    "description": "This script creates a browser overlay to display detailed SiteGround hosting reports, including server health, site usage, performance trends, and a branded PDF report generator. It is used to visualize and analyze server metrics directly from the SiteGround control panel.",
+    "usage": [
+      "Open a SiteGround dashboard containing API data about server CPU, memory, and site stats.",
+      "Run the script directly on the page; it will inject a full-featured overlay with charts and reports.",
+      "Use the provided buttons to generate PDF reports, export CSV data, or view comparisons and trends.",
+      "Ensure pop-ups are not blocked; the script automatically handles data collection and visualization."
+    ],
+    "hash": "e71315f063ec6f4b68c5345382cf13972f0176a401992c5782a10b70df6773f6"
+  },
+  "ie-extractor.js": {
+    "description": "This script creates a floating image extractor panel on any page, which collects all images, detects if they are from iStock, and displays them in a sortable table. You can filter images by filename, alt text, or iStock ID, select images, and download their files directly. It enhances image management without altering page content permanently.",
+    "usage": [
+      "Run the bookmarklet while on a page with images to activate the extractor panel.",
+      "Click the 🖼 Images FAB button to show/hide the panel.",
+      "Use the search box or filters to find specific images by filename, alt, or iStock ID.",
+      "Click download options in the panel to save selected images."
+    ],
+    "hash": "26a4b7c9a884d6b9d6b3e78766fd0b959cafd0767eab5d6d73faaaa3a4ee27a5"
+  }
+}
