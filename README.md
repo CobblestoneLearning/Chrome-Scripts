@@ -7,7 +7,7 @@ The script catalog below is regenerated automatically by GitHub Actions on every
 ## How it works
 
 - Drop a `.js` file in the repo root and push to `main`.
-- The [Generate README](.github/workflows/generate-readme.yml) workflow asks OpenAI (`openai`, default model `gpt-4o-mini`) for a description and usage notes for any new or changed script, builds a minified `javascript:` bookmarklet, and rebuilds the **Scripts** section below.
+- The [Generate README](.github/workflows/generate-readme.yml) workflow asks OpenAI (`openai`, default model `gpt-4.1-nano` — 1M context, very cheap) for a description and usage notes for any new or changed script, builds a minified `javascript:` bookmarklet, and rebuilds the **Scripts** section below.
 - Descriptions are cached in `.github/cache/script-descriptions.json` keyed by file content hash — unchanged scripts cost zero API calls on subsequent runs.
 
 ## Setup
