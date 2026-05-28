@@ -55,6 +55,7 @@
         cpu_exec_ratio: '<strong>CPU per Execution</strong> — average CPU seconds spent per PHP invocation.<br><br>Isolates whether a fix reduced load <em>volume</em> (fewer requests) or <em>cost</em> (each request cheaper).<br><br><span style="color:#4ade80">✅ Reduced overhead:</span> ratio drops — each call costs less (e.g. early-intercept bypassing PHP bootstrap)<br><span style="color:#fbbf24">→ Reduced volume only:</span> ratio same, executions down — requests blocked before starting<br><span style="color:#f87171">🔴 Worse:</span> ratio rises — fewer requests but each heavier, worth investigating',
         health_score: '<strong>Health Score (0–100)</strong> — composite server condition indicator.<br><br>Combines: live cores in use vs plan limit, recent CPU trend vs 7-day average, per-site anomalies from hourly data, live memory vs plan limit, and site-concentration (HHI).<br><br><span style="color:#4ade80">✅ 75–100: Healthy</span> — operating normally<br><span style="color:#fbbf24">⚠️ 45–74: Elevated</span> — some load pressure, monitor<br><span style="color:#f87171">🔴 0–44: Under Pressure</span> — investigate immediately',
         barometer: '<strong>Load Barometer</strong> — real-time server pressure at 15-second resolution.<br><br>The last 30 minutes of cores-in-use — the fastest available signal of server stress. Thresholds scale with your plan size: 75% of plan is the saturation line regardless of whether the plan is 7 or 9 cores.<br><br><span style="color:#4ade80">✅ Low:</span> steady below 50% of plan — server cruising<br><span style="color:#fbbf24">⚠️ Elevated:</span> trending toward 75% — monitor next 30 min<br><span style="color:#f87171">🔴 High:</span> sustained 75%+ — users experiencing slowdowns right now',
+        fix_focus: '<strong>Fix Focus</strong> — which kind of improvement you\'re trying to demonstrate.<br><br>The dashboard tailors its headline card, verdict, and primary statistical test to the metric you pick: cost per execution, execution volume, CPU seconds, memory used, or server cores in use.<br><br><em>Choose</em> <strong>Combination</strong> when the fix spanned several axes (e.g. blocked a bot AND optimised a function). The default <em>Show everything</em> matches the original Before/After layout.',
     };
 
     // GUIDE: structured glossary, source of truth for the Guide tab and Explain mode subtitles.
@@ -319,12 +320,33 @@
         top3: 'Top 3 by CPU',
         top10: 'Top 10 by CPU',
         smallest5: 'Smallest 5 active',
+        similar: 'Similar size (±50% of target)',
         network: 'Whole Network (every other active site)',
         cobble: 'Cobblestone domains (*.cobblestonelearning.com)',
         unpatched: 'Unpatched (snn+einn)',
         lms_core: 'LMS Core 4',
         non_lms: 'Non-LMS',
         custom: 'Custom — pick sites…'
+    };
+    // Fix Focus: what kind of improvement the user is trying to demonstrate. The hero card,
+    // verdict, and primary DiD test all adapt to the chosen metric so the analysis presents
+    // the right number first. 'combo' tiles all five for fixes that targeted multiple axes.
+    const FOCUS_PRESETS = {
+        auto: 'Show everything (default)',
+        cost: 'Reduce cost per execution',
+        execs: 'Reduce execution volume',
+        cpu: 'Reduce CPU time',
+        memory: 'Reduce memory usage',
+        cores: 'Reduce server-core usage',
+        combo: 'Combination (all metrics)'
+    };
+    // Short label used inside hero cards & narrative copy.
+    const FOCUS_LABELS = {
+        cost: 'Cost per execution',
+        execs: 'Execution volume',
+        cpu: 'CPU seconds',
+        memory: 'Memory used',
+        cores: 'Server cores in use'
     };
 
     const CAP = {
@@ -400,13 +422,60 @@
                     return [];
                 }
             }
-            )()
+            )(),
+            // Before/After: which metric the user is trying to demonstrate they improved.
+            // Drives the hero card and the per-metric DiD shown most prominently. 'auto' = original
+            // 'show everything' behaviour. Persisted so the user's last analysis stance survives reloads.
+            fixFocus: (() => {
+                try {
+                    return localStorage.getItem('sgd_fix_focus') || 'auto';
+                } catch {
+                    return 'auto';
+                }
+            }
+            )(),
+            // Before/After advanced filters
+            minActivityCpu: 0,        // Hide peer sites whose before-window CPU/day average is below this
+            weekdaysOnly: false,      // Drop Sat/Sun from both windows (and from the matched-pair calc)
+            useCustomDates: false,    // Toggles N-days inputs ↔ before-start + after-end date pickers
+            customBeforeStart: null,
+            customAfterEnd: null
         }
     };
     const persistCustomCtrl = () => {
         try {
             localStorage.setItem('sgd_custom_ctrl', JSON.stringify(S.ui.customCtrl));
         } catch {}
+    }
+    ;
+    const persistFixFocus = () => {
+        try {
+            localStorage.setItem('sgd_fix_focus', S.ui.fixFocus);
+        } catch {}
+    }
+    ;
+    // Pulls the Before/After advanced-filter inputs into the {weekdaysOnly, minActivityCpu,
+    // bStart, bEnd, aStart, aEnd} shape buildCmp expects. Shared between the live renderer
+    // and the report-generator click handlers so both paths analyse the same window.
+    const buildCmpOptsFromUI = fixDate => {
+        const weekdaysOnly = !!document.getElementById('cmp-weekdays')?.checked || !!S.ui.weekdaysOnly;
+        const minActivityCpu = +(document.getElementById('cmp-minact')?.value || S.ui.minActivityCpu || 0);
+        const useCustom = !!S.ui.useCustomDates;
+        const cBefStart = document.getElementById('cmp-bstart')?.value || S.ui.customBeforeStart;
+        const cAftEnd = document.getElementById('cmp-aend')?.value || S.ui.customAfterEnd;
+        const opts = {
+            weekdaysOnly,
+            minActivityCpu
+        };
+        if (useCustom && cBefStart) {
+            opts.bStart = cBefStart;
+            opts.bEnd = addDays(fixDate, -1);
+        }
+        if (useCustom && cAftEnd) {
+            opts.aStart = fixDate;
+            opts.aEnd = cAftEnd;
+        }
+        return opts;
     }
     ;
     const persistExcluded = () => {
@@ -1604,6 +1673,20 @@
             return active.slice(0, 10).map(s => s.domain);
         if (preset === 'smallest5')
             return active.slice(-5).map(s => s.domain);
+        if (preset === 'similar') {
+            // "Like-for-like" peers: every active site whose total-window CPU falls within
+            // ±50% of the target's. Caps at 12 closest matches to keep the DiD comparable
+            // and the chart readable. If target has 0 CPU (edge case), fall back to top 5.
+            const tStat = data.siteStats.find(s => s.domain === target);
+            const tTot = tStat?.total || 0;
+            if (tTot <= 0)
+                return active.slice(0, 5).map(s => s.domain);
+            const lo = tTot * 0.5
+              , hi = tTot * 1.5;
+            return active.filter(s => s.total >= lo && s.total <= hi).slice()
+                .sort( (a, b) => Math.abs(a.total - tTot) - Math.abs(b.total - tTot))
+                .slice(0, 12).map(s => s.domain);
+        }
         if (preset === 'network')
             return active.map(s => s.domain);
         if (preset === 'cobble')
@@ -1637,13 +1720,24 @@
     }
     ;
 
-    const buildCmp = (data, target, fixDate, daysBefore, daysAfter, ctrlDoms) => {
-        const bStart = addDays(fixDate, -daysBefore)
-          , bEnd = addDays(fixDate, -1);
-        const aStart = fixDate
-          , aEnd = addDays(fixDate, daysAfter - 1);
-        const bDates = data.dates.filter(d => d >= bStart && d <= bEnd && !data.incompleteDates.has(d));
-        const aDates = data.dates.filter(d => d >= aStart && d <= aEnd && !data.incompleteDates.has(d));
+    const buildCmp = (data, target, fixDate, daysBefore, daysAfter, ctrlDoms, opts = {}) => {
+        // opts can override the implicit ±N-days window with absolute date strings, drop
+        // weekends entirely from both windows, and prune low-activity peers from the network.
+        // All three are wired through Before/After's "Advanced filters" row.
+        const bStart = opts.bStart || addDays(fixDate, -daysBefore)
+          , bEnd = opts.bEnd || addDays(fixDate, -1);
+        const aStart = opts.aStart || fixDate
+          , aEnd = opts.aEnd || addDays(fixDate, daysAfter - 1);
+        const weekdaysOnly = !!opts.weekdaysOnly;
+        const minAct = +(opts.minActivityCpu || 0);
+        const isBusinessDay = d => {
+            const w = weekdayOf(d);
+            return w !== 0 && w !== 6;
+        }
+        ;
+        const dateFilter = d => !data.incompleteDates.has(d) && (!weekdaysOnly || isBusinessDay(d));
+        const bDates = data.dates.filter(d => d >= bStart && d <= bEnd && dateFilter(d));
+        const aDates = data.dates.filter(d => d >= aStart && d <= aEnd && dateFilter(d));
         const tB = bDates.map(d => data.sv(target, d))
           , tA = aDates.map(d => data.sv(target, d));
         const cB = bDates.map(d => ctrlDoms.reduce( (s, cd) => s + data.sv(cd, d), 0));
@@ -1665,7 +1759,20 @@
         // We use it to compute a difference-in-differences (DiD) net effect: the share of
         // the target's improvement that wasn't simply ambient drift across the whole account.
         // User-excluded sites are dropped from the network — they're treated as if they don't exist.
-        const networkDoms = data.siteStats.filter(s => s.domain !== target && s.total > 0 && !s.isExcluded).map(s => s.domain);
+        // When minAct > 0 also drop sites whose before-window avg CPU/day is below the threshold:
+        // a 5 → 50 CPU sec/day swing looks like +900% but is noise; min-activity keeps the DiD
+        // numerically stable.
+        const networkDoms = data.siteStats.filter(s => {
+            if (s.domain === target || s.total <= 0 || s.isExcluded)
+                return false;
+            if (minAct > 0) {
+                const bAvg = avgAll(bDates.map(d => data.sv(s.domain, d)));
+                if (bAvg < minAct)
+                    return false;
+            }
+            return true;
+        }
+        ).map(s => s.domain);
         const nB = bDates.map(d => networkDoms.reduce( (s, dd) => s + data.sv(dd, d), 0));
         const nA = aDates.map(d => networkDoms.reduce( (s, dd) => s + data.sv(dd, d), 0));
         const tAvgB = avgAll(tB)
@@ -2546,6 +2653,43 @@ tr.incomplete td{opacity:.45}
 .net-hero .nh-pair .nh-num{font-size:22px;font-weight:800;line-height:1}
 .net-hero .nh-pair .nh-pc{font-size:13px;font-weight:700}
 @media (max-width: 760px){.net-hero{grid-template-columns:1fr;gap:10px}}
+/* ── Fix Focus hero — adapts to the chosen metric the user is trying to demonstrate ── */
+.focus-hero{background:var(--bg-card);border:1px solid var(--border);border-top:var(--accent-bar);border-radius:var(--radius);padding:20px 24px;margin-bottom:var(--gap-cards);box-shadow:var(--shadow-hero)}
+.focus-hero.noop{background:var(--warn-bg);border-color:var(--warn-border);color:var(--warn-text);padding:14px 18px;font-size:12.5px}
+.focus-hero .fh-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;padding-bottom:14px;border-bottom:1px dashed var(--border-faint);margin-bottom:14px}
+.focus-hero .fh-eyebrow{font-size:10px;font-weight:700;color:var(--text-faint);text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:4px}
+.focus-hero .fh-title{font-size:18px;font-weight:800;margin:0;line-height:1.2;letter-spacing:-.01em;color:var(--text-strong)}
+.focus-hero .fh-hero-num{font-size:32px;font-weight:800;letter-spacing:-.02em;line-height:1;display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:140px;text-align:right}
+.focus-hero .fh-hero-unit{font-size:10px;font-weight:600;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em}
+.focus-hero .fh-body{display:flex;flex-direction:column;gap:9px;margin-bottom:14px}
+.focus-hero .fh-row{display:grid;grid-template-columns:1.2fr 2fr;gap:14px;align-items:center;padding:10px 12px;border-radius:var(--radius-sm);background:var(--bg-card-alt)}
+.focus-hero .fh-row-lbl{font-size:12px;font-weight:600;color:var(--text-muted)}
+.focus-hero .fh-row-vals{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.focus-hero .fh-row-pair{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text-strong)}
+.focus-hero .fh-row-ch{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
+.focus-hero .fh-verdict{padding:11px 14px;border-radius:var(--radius-sm);font-size:12.5px;line-height:1.55;background:var(--bg-card-alt);border-left:3px solid var(--accent)}
+.focus-hero .fh-verdict.cg{border-left-color:var(--ok);background:var(--ok-bg);color:var(--ok-text)}
+.focus-hero .fh-verdict.cr{border-left-color:var(--crit);background:var(--crit-bg);color:var(--crit-text)}
+.focus-hero .fh-verdict.cw2{border-left-color:var(--warn);background:var(--warn-bg);color:var(--warn-text)}
+.focus-hero .fh-counter{font-size:11.5px;color:var(--text-muted);padding:8px 12px;margin-top:8px;background:var(--bg-card-alt);border-radius:var(--radius-sm);line-height:1.55}
+.focus-hero .fh-note{font-size:11px;color:var(--text-faint);padding:8px 12px;background:var(--info-bg);color:var(--info-text);border-radius:var(--radius-sm);margin-bottom:10px;line-height:1.55}
+.focus-hero .fh-mini-rank{margin-top:14px;padding-top:12px;border-top:1px dashed var(--border-faint)}
+.focus-hero .fh-mini-h{font-size:10.5px;font-weight:700;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px}
+.focus-hero .fh-mini-list{margin:0;padding-left:14px;font-size:12px;color:var(--text-muted);line-height:1.7}
+.focus-hero .fh-mini-list li{font-variant-numeric:tabular-nums}
+.focus-hero .fh-mini-list .fh-mini-ch{font-weight:700;margin-left:6px}
+.focus-hero .fh-mini-list .fh-mini-tgt{margin-top:4px;color:var(--text-strong)}
+.focus-hero .combo-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.focus-hero .combo-tbl th{padding:7px 9px;font-size:10px;font-weight:700;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border)}
+.focus-hero .combo-tbl td{padding:9px 9px;border-bottom:1px solid var(--border-faint);font-variant-numeric:tabular-nums}
+.focus-hero .combo-tbl td.r{text-align:right;font-weight:600}
+.focus-hero .combo-tbl tr.combo-server td{color:var(--text-faint)}
+.focus-hero .combo-tbl .combo-ext{color:var(--text-faint);font-size:11px;font-weight:500}
+.filter-ctx{background:var(--info-bg);border:1px solid var(--info-border);color:var(--info-text);font-size:11.5px;padding:7px 13px;border-radius:var(--radius-sm);margin-bottom:var(--gap-cards)}
+.filter-ctx strong{color:var(--info-text)}
+.adv-toggle{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-muted);font-weight:600;cursor:pointer;user-select:none}
+.adv-toggle input{accent-color:var(--accent);cursor:pointer}
+@media (max-width: 760px){.focus-hero .fh-head{flex-direction:column;align-items:flex-start;gap:10px}.focus-hero .fh-hero-num{align-items:flex-start;text-align:left}.focus-hero .fh-row{grid-template-columns:1fr}}
 .lens-row-strip{background:var(--bg-card);border:1px solid var(--border);border-top:var(--accent-bar);border-radius:var(--radius);padding:18px 22px;margin-bottom:var(--gap-cards);box-shadow:var(--shadow-hero)}
 .lens-strip-h{font-size:13px;font-weight:700;color:var(--text-strong);margin-bottom:14px;display:flex;align-items:baseline;flex-wrap:wrap;gap:10px}
 .lens-strip-sub{font-size:11px;font-weight:400;color:var(--text-muted);line-height:1.5;flex:1;min-width:280px}
@@ -2562,8 +2706,11 @@ tr.incomplete td{opacity:.45}
 .lens-row-pair{font-size:11.5px;color:var(--text-strong);font-variant-numeric:tabular-nums;font-weight:600}
 .lens-row-ch{font-size:11.5px;font-weight:700;min-width:55px;text-align:right;font-variant-numeric:tabular-nums}
 @media (max-width: 980px){.lens-grid{grid-template-columns:1fr}}
-.excl-banner{background:var(--warn-bg);border:1px solid var(--warn-border);color:var(--warn);font-size:11.5px;padding:9px 14px;border-radius:var(--radius-sm);margin-bottom:var(--gap-cards);cursor:default}
+.excl-banner{background:var(--warn-bg);border:1px solid var(--warn-border);color:var(--warn);font-size:11.5px;padding:9px 14px;border-radius:var(--radius-sm);margin-bottom:var(--gap-cards);cursor:pointer;transition:background .15s,border-color .15s}
+.excl-banner:hover{background:var(--warn-bg);border-color:var(--warn);filter:brightness(0.98)}
 .excl-banner strong{color:var(--warn)}
+.cust-row.is-target{background:var(--accent-bg);border:1px solid var(--accent-border)}
+.cust-row.is-target input{opacity:.5;cursor:not-allowed}
 .rank-tbl tr.target td{background:var(--accent-bg);color:var(--text-strong);font-weight:600}
 .rank-tbl tr.target td:first-child{border-left:3px solid var(--accent);padding-left:9px}
 .rank-tbl td .rank-bar{display:inline-block;height:6px;border-radius:3px;background:var(--ok);vertical-align:middle;margin-left:6px;min-width:1px;max-width:120px}
@@ -4457,16 +4604,30 @@ svg.spark{display:inline-block;vertical-align:middle}
         const body = document.getElementById('sgd-body');
         const sOpts = data.siteStats.filter(s => s.total > 0).map(s => `<option value="${esc(s.domain)}" ${s.domain === S.ui.target ? 'selected' : ''}>${esc(s.domain)}</option>`).join('');
         const cOpts = Object.entries(CTRL_PRESETS).map( ([k,v]) => `<option value="${k}" ${S.ui.ctrlPreset === k ? 'selected' : ''}>${esc(v)}</option>`).join('');
+        const fOpts = Object.entries(FOCUS_PRESETS).map( ([k,v]) => `<option value="${k}" ${S.ui.fixFocus === k ? 'selected' : ''}>${esc(v)}</option>`).join('');
+        const usingCustom = !!S.ui.useCustomDates;
+        const cBefStart = S.ui.customBeforeStart || addDays(S.ui.fixDate, -S.ui.daysBefore);
+        const cAftEnd = S.ui.customAfterEnd || addDays(S.ui.fixDate, S.ui.daysAfter - 1);
         body.innerHTML = `
     ${introCard('compare')}
     <div class="ctrl-row">
       <div class="fld"><label>Target Site</label><select id="cmp-tgt">${sOpts}</select></div>
       <div class="fld"><label>Fix Date ${tipIcon('fix_date')}</label><input type="date" id="cmp-fix" value="${S.ui.fixDate}"></div>
-      <div class="fld"><label>Days Before</label><input type="number" id="cmp-before" value="${S.ui.daysBefore}" min="1" max="60" style="width:57px"></div>
-      <div class="fld"><label>Days After</label><input type="number" id="cmp-after" value="${S.ui.daysAfter}" min="1" max="60" style="width:57px"></div>
+      <div class="fld" id="fld-before-n" ${usingCustom ? 'style="display:none"' : ''}><label>Days Before</label><input type="number" id="cmp-before" value="${S.ui.daysBefore}" min="1" max="60" style="width:57px"></div>
+      <div class="fld" id="fld-after-n" ${usingCustom ? 'style="display:none"' : ''}><label>Days After</label><input type="number" id="cmp-after" value="${S.ui.daysAfter}" min="1" max="60" style="width:57px"></div>
+      <div class="fld" id="fld-before-d" ${!usingCustom ? 'style="display:none"' : ''}><label>Before Start</label><input type="date" id="cmp-bstart" value="${esc(cBefStart)}"></div>
+      <div class="fld" id="fld-after-d" ${!usingCustom ? 'style="display:none"' : ''}><label>After End</label><input type="date" id="cmp-aend" value="${esc(cAftEnd)}"></div>
+      <div class="fld"><label>Fix Focus ${tipIcon('fix_focus')}</label><select id="cmp-focus">${fOpts}</select></div>
       <div class="fld"><label>Compare Against ${tipIcon('control_group')}</label><select id="cmp-ctrl">${cOpts}</select></div>
+      <button class="btn sec" data-a="manage-sites" data-tip="${esc('<strong>Include / exclude sites</strong> from every per-site calculation: control group, network, ranking, and DiD. Server-wide metrics (cores, GB used, live barometers) are unaffected — SiteGround\'s API only reports those account-wide.')}">🚫 Manage Sites <span style="opacity:.7;font-size:10px;margin-left:3px">(${S.ui.excludedSites.size})</span></button>
       <button class="btn" data-a="run-cmp">Run Analysis</button>
       <button class="btn sec" data-a="gen-report" data-tip="${esc('Open a Cobblestone-branded, print-ready PDF version of this analysis in a new tab. Save-as-PDF from your browser\'s print dialog.')}">📄 Generate Branded Report</button>
+    </div>
+    <div class="ctrl-row" style="gap:18px;margin-bottom:14px;padding:10px 14px;border:1px dashed var(--border);border-radius:var(--radius-sm);background:var(--bg-card-alt)">
+      <span style="font-size:10.5px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em">Advanced filters</span>
+      <label class="adv-toggle" data-tip="${esc('When on, the date inputs above switch from <strong>±N days around the fix</strong> to <strong>arbitrary date pickers</strong>. Use this when your before-window starts on a specific event (a prior fix, a plan upgrade) rather than a uniform N days.')}"><input type="checkbox" id="cmp-customdates" ${usingCustom ? 'checked' : ''}> Custom date range</label>
+      <label class="adv-toggle" data-tip="${esc('Drop Saturday + Sunday from both windows. Useful when your traffic profile is dominated by weekday business activity and weekend behaviour would skew the average. Affects every calculation: averages, network DiD, weekday-paired residuals.')}"><input type="checkbox" id="cmp-weekdays" ${S.ui.weekdaysOnly ? 'checked' : ''}> Weekdays only</label>
+      <div class="fld" style="flex-direction:row;align-items:center;gap:8px" data-tip="${esc('Drop very-low-traffic sites from the peer network and ranking. A site with 5 CPU sec/day swinging to 50 looks like +900% but that\'s noise. Setting this to e.g. 50 CPU sec/day keeps the network comparison meaningful.')}"><label style="margin:0;text-transform:none;letter-spacing:0;font-weight:600;color:var(--text-muted)">Min peer activity</label><input type="number" id="cmp-minact" value="${S.ui.minActivityCpu || 0}" min="0" step="10" style="width:78px;padding:6px 9px;font-size:11.5px"> <span style="font-size:10.5px;color:var(--text-faint)">CPU sec/day</span></div>
     </div>
     <div id="cmp-out"></div>`;
         // Auto-rerun on any input change. `change` covers selects + date pickers;
@@ -4487,12 +4648,46 @@ svg.spark{display:inline-block;vertical-align:middle}
             }
         }
         );
-        ['cmp-before', 'cmp-after'].forEach(id => {
+        ['cmp-before', 'cmp-after', 'cmp-bstart', 'cmp-aend', 'cmp-minact'].forEach(id => {
             const el = document.getElementById(id);
             if (el) {
                 el.addEventListener('change', rerun);
                 el.addEventListener('input', rerun);
             }
+        }
+        );
+        // Fix Focus drives the hero card and verdict — re-render on change. Persist so the
+        // user's last analytic stance survives reloads.
+        document.getElementById('cmp-focus')?.addEventListener('change', e => {
+            S.ui.fixFocus = e.target.value;
+            persistFixFocus();
+            rerun();
+        }
+        );
+        // Weekdays-only filter — recompute everything when toggled.
+        document.getElementById('cmp-weekdays')?.addEventListener('change', e => {
+            S.ui.weekdaysOnly = !!e.target.checked;
+            rerun();
+        }
+        );
+        // Custom date range toggle: swap the N-days inputs for date pickers, in place.
+        // No re-render of the whole tab — just flip visibility of the existing .fld blocks.
+        document.getElementById('cmp-customdates')?.addEventListener('change', e => {
+            S.ui.useCustomDates = !!e.target.checked;
+            const showCustom = S.ui.useCustomDates;
+            ['fld-before-n', 'fld-after-n'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el)
+                    el.style.display = showCustom ? 'none' : '';
+            }
+            );
+            ['fld-before-d', 'fld-after-d'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el)
+                    el.style.display = showCustom ? '' : 'none';
+            }
+            );
+            rerun();
         }
         );
         renderCmpOut(data);
@@ -4586,6 +4781,407 @@ svg.spark{display:inline-block;vertical-align:middle}
     }
     ;
 
+    // Modal that lists every site with an INCLUDED checkbox (unchecked = excluded).
+    // Replaces the old "jump to the Sites tab to manage exclusions" flow with a single
+    // inline picker reachable from both the header excl-chip and the Before/After filter
+    // row. The current target is always included (checkbox forced + disabled). Calls
+    // onApply after persisting the new exclusion set.
+    const openSiteInclusionPanel = (data, onApply) => {
+        document.getElementById('sgd-incl-overlay')?.remove();
+        const target = document.getElementById('cmp-tgt')?.value || S.ui.target;
+        // Show every site that registered any CPU at all (sorted heaviest first).
+        // Pure-dead/parked sites don't appear in any per-site calc anyway, so omitting
+        // them avoids a list dominated by zeros.
+        const sites = data.siteStats.filter(s => s.total > 0).slice().sort( (a, b) => b.total - a.total);
+        const initiallyExcluded = new Set(S.ui.excludedSites);
+        const rows = sites.map(s => {
+            const isTgt = s.domain === target;
+            const isExcl = initiallyExcluded.has(s.domain);
+            const checked = !isExcl || isTgt ? 'checked' : '';
+            const tgtLbl = isTgt ? ' <span style="color:var(--accent);font-size:10px;font-weight:700">target</span>' : '';
+            return `<label class="cust-row${isTgt ? ' is-target' : ''}">
+        <input type="checkbox" data-d="${esc(s.domain)}" ${checked}${isTgt ? ' disabled' : ''}>
+        <span class="cust-nm">${esc(s.domain)}${tgtLbl}</span>
+        <span class="cust-cpu">${fmtN(s.total)} CPU sec · ${fmtD(s.shareOfAccount, 1)}%</span>
+      </label>`;
+        }
+        ).join('');
+        const overlay = document.createElement('div');
+        overlay.id = 'sgd-incl-overlay';
+        overlay.className = 'drill-overlay';
+        overlay.setAttribute('data-theme', S.ui.theme);
+        const initIncluded = sites.length - sites.filter(s => initiallyExcluded.has(s.domain) && s.domain !== target).length;
+        overlay.innerHTML = `
+      <div class="drill-modal" style="max-width:640px;padding:22px 26px">
+        <div class="drill-hdr" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px">
+          <h3 style="font-family:inherit;margin:0">Include / exclude sites</h3>
+          <button class="btn sec sm" id="sgd-incl-cancel">✕</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-faint);line-height:1.55;margin-bottom:12px">
+          Unchecked sites are dropped from every per-site calculation: control group, network, ranking, and DiD.
+          Server-wide metrics (cores in use, GB used, live barometers) are unaffected — SiteGround's API only reports those account-wide.
+          The current <strong>target site</strong> is always included.
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <input type="text" id="sgd-incl-search" placeholder="Search sites…" style="flex:1;min-width:160px;padding:7px 11px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-card-alt);color:var(--text-strong);font-size:12px">
+          <button class="btn sec sm" id="sgd-incl-all">Include all</button>
+          <button class="btn sec sm" id="sgd-incl-none">Exclude all</button>
+          <button class="btn sec sm" id="sgd-incl-invert" title="Flip every visible site's inclusion state">Invert</button>
+        </div>
+        <div id="sgd-incl-list" style="max-height:55vh;overflow-y:auto;padding-right:6px">${rows}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);gap:12px">
+          <span style="font-size:11.5px;color:var(--text-faint)" id="sgd-incl-count">${initIncluded} of ${sites.length} included</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn sec sm" id="sgd-incl-reset" title="Re-include every site (clear all exclusions)">Reset</button>
+            <button class="btn" id="sgd-incl-apply">Apply</button>
+          </div>
+        </div>
+      </div>`;
+        document.body.appendChild(overlay);
+        const list = overlay.querySelector('#sgd-incl-list');
+        const countEl = overlay.querySelector('#sgd-incl-count');
+        const updateCount = () => {
+            const inc = list.querySelectorAll('input:checked').length;
+            const tot = list.querySelectorAll('input').length;
+            countEl.textContent = `${inc} of ${tot} included`;
+        }
+        ;
+        list.addEventListener('change', updateCount);
+        const applyToVisible = fn => {
+            list.querySelectorAll('input').forEach(c => {
+                if (c.disabled)
+                    return;
+                if (c.closest('.cust-row').style.display === 'none')
+                    return;
+                fn(c);
+            }
+            );
+            updateCount();
+        }
+        ;
+        overlay.querySelector('#sgd-incl-all').addEventListener('click', () => applyToVisible(c => c.checked = true));
+        overlay.querySelector('#sgd-incl-none').addEventListener('click', () => applyToVisible(c => c.checked = false));
+        overlay.querySelector('#sgd-incl-invert').addEventListener('click', () => applyToVisible(c => c.checked = !c.checked));
+        overlay.querySelector('#sgd-incl-reset').addEventListener('click', () => {
+            list.querySelectorAll('input').forEach(c => {
+                if (!c.disabled)
+                    c.checked = true;
+            }
+            );
+            updateCount();
+        }
+        );
+        overlay.querySelector('#sgd-incl-search').addEventListener('input', e => {
+            const q = e.target.value.toLowerCase();
+            list.querySelectorAll('.cust-row').forEach(r => {
+                r.style.display = r.querySelector('.cust-nm').textContent.toLowerCase().includes(q) ? '' : 'none';
+            }
+            );
+        }
+        );
+        const close = () => overlay.remove();
+        overlay.querySelector('#sgd-incl-cancel').addEventListener('click', close);
+        overlay.addEventListener('click', e => {
+            if (e.target === overlay)
+                close();
+        }
+        );
+        overlay.querySelector('#sgd-incl-apply').addEventListener('click', () => {
+            // Rebuild excludedSites from the unchecked-and-not-disabled boxes.
+            const next = new Set();
+            list.querySelectorAll('input').forEach(c => {
+                if (!c.checked && !c.disabled)
+                    next.add(c.dataset.d);
+            }
+            );
+            S.ui.excludedSites = next;
+            persistExcluded();
+            // Re-derive isExcluded on cached siteStats so every renderer honours the update.
+            if (S.data)
+                S.data.siteStats.forEach(s => s.isExcluded = isExcluded(s.domain));
+            // Refresh the persistent header chip in place.
+            const chip = document.getElementById('sgd-excl-chip');
+            if (chip) {
+                chip.classList.toggle('has', S.ui.excludedSites.size > 0);
+                const c = chip.querySelector('#sgd-excl-count');
+                if (c)
+                    c.textContent = S.ui.excludedSites.size;
+            }
+            close();
+            onApply?.();
+        }
+        );
+    }
+    ;
+
+    // Per-site ranking on an arbitrary metric extracted from perSiteRaw. Used by the
+    // Fix Focus hero to rank "most-improved on cost-per-exec" or "most-decreased on
+    // execution volume" without rebuilding the per-site loop. Drops sites with
+    // null/zero baseline on the chosen metric and any NEW/DIED/INACTIVE/excluded peers
+    // (target is always kept).
+    const rankByMetric = (perSiteRaw, getCh, target) => {
+        return perSiteRaw
+            .filter(r => {
+                if (['NEW', 'DIED', 'INACTIVE'].includes(r.activityClass))
+                    return false;
+                if (!r.isTarget && isExcluded(r.domain))
+                    return false;
+                const v = getCh(r);
+                return v !== null && isFinite(v);
+            }
+            )
+            .map(r => ({ ...r, metricCh: getCh(r) }))
+            .sort( (a, b) => a.metricCh - b.metricCh);
+    }
+    ;
+
+    // Render the Fix Focus hero — a single, prominent card at the top of Before/After
+    // that tells the user the one number that matters for the fix they're trying to
+    // demonstrate. Returns '' when fixFocus is 'auto' (original full layout takes over).
+    //
+    // Each focus picks: (a) the headline metric, (b) the appropriate DiD vs peers/network,
+    // (c) a tailored verdict, (d) where applicable, a mini ranking of similar sites.
+    // Memory + Cores are server-wide-only (SG API limitation) so those heroes lean on
+    // correlation with the target's CPU share rather than a per-site DiD.
+    const renderFocusHero = (cmp, focus, target, data, ctrlDoms, ctrlLabel) => {
+        if (focus === 'auto')
+            return '';
+        const site = target.split('.')[0];
+        const ctrlSize = ctrlDoms.length;
+        const netSize = cmp.networkDoms.length;
+        const ctrlLbl = `${esc(ctrlLabel)} (${ctrlSize} site${ctrlSize === 1 ? '' : 's'})`;
+        const netLbl = `Whole network (${netSize} site${netSize === 1 ? '' : 's'})`;
+        const tgtLbl = `Target — ${esc(site)}`;
+        // Common row builder: label + "before → after" pair + change %, with colour class.
+        const row = (label, before, after, ch, fmtFn, unit) => {
+            const arrow = ch === null ? '→' : ch < 0 ? '↓' : ch > 0 ? '↑' : '→';
+            const bStr = before === null || before === undefined ? '—' : fmtFn(before);
+            const aStr = after === null || after === undefined ? '—' : fmtFn(after);
+            return `<div class="fh-row">
+        <div class="fh-row-lbl">${label}</div>
+        <div class="fh-row-vals">
+          <span class="fh-row-pair">${bStr} → ${aStr}${unit ? ` <span style="color:var(--text-faint);font-size:10px">${esc(unit)}</span>` : ''}</span>
+          <span class="fh-row-ch ${clsCh(ch)}">${arrow} ${ch === null ? '—' : signStr(ch)}</span>
+        </div>
+      </div>`;
+        }
+        ;
+        // DiD-style verdict given target's change and a reference change (typically network)
+        const verdict = (tCh, refCh, refName, goal) => {
+            if (tCh === null || refCh === null)
+                return { cls: 'cn', heroLbl: '—', text: 'Insufficient data for peer comparison.' };
+            const did = tCh - refCh;
+            const cls = did <= -10 ? 'cg' : did >= 10 ? 'cr' : Math.abs(did) > 3 ? 'cw2' : 'cn';
+            const heroLbl = `${did > 0 ? '+' : ''}${did.toFixed(1)} pp`;
+            let text;
+            if (did <= -15)
+                text = `✅ <strong>Target beat ${refName} by ${Math.abs(did).toFixed(0)} pp.</strong> The fix has a clearly isolated effect on ${esc(goal)} — peers were not seeing the same improvement.`;
+            else if (did < -5)
+                text = `⚠️ Modest peer-relative win on ${esc(goal)}: ${did.toFixed(1)} pp better than ${refName}. Some of the gain is real, but a meaningful share could be ambient.`;
+            else if (Math.abs(did) <= 5)
+                text = `🔴 Target moved with ${refName} (target ${signStr(tCh)} vs ${refName} ${signStr(refCh)}). ${esc(goal)} changed similarly everywhere — the fix can't be credited with the isolated improvement.`;
+            else
+                text = `🔴 Target <em>underperformed</em> ${refName} by ${did.toFixed(0)} pp on ${esc(goal)}. Investigate — the fix may have regressed this axis relative to peers.`;
+            return { cls, heroLbl, text };
+        }
+        ;
+        // Mini per-site ranking strip for the chosen metric. Renders the top-3 movers
+        // (most-improved) plus the target's position. Helps the user see whether target
+        // is genuinely an outlier or just part of an account-wide trend.
+        const miniRank = (ranked, fmtFn, unit) => {
+            if (!ranked.length)
+                return '';
+            const targetIdx = ranked.findIndex(r => r.isTarget);
+            const tot = ranked.length;
+            const topN = ranked.slice(0, 3);
+            const items = topN.map( (r, i) => `<li>${r.isTarget ? '<strong style="color:var(--accent)">' : ''}#${i + 1} ${esc(r.domain)}${r.isTarget ? '</strong>' : ''} <span class="fh-mini-ch ${clsCh(r.metricCh)}">${signStr(r.metricCh)}</span></li>`).join('');
+            const targetBit = targetIdx >= 3 ? `<li class="fh-mini-tgt">… #${targetIdx + 1} of ${tot}: <strong>${esc(site)}</strong> <span class="fh-mini-ch ${clsCh(ranked[targetIdx].metricCh)}">${signStr(ranked[targetIdx].metricCh)}</span></li>` : (targetIdx < 0 ? `<li class="fh-mini-tgt">target unranked (insufficient baseline)</li>` : '');
+            return `<div class="fh-mini-rank">
+        <div class="fh-mini-h">Most-improved peers on this metric (${tot} sites ranked)</div>
+        <ol class="fh-mini-list">${items}${targetBit}</ol>
+      </div>`;
+        }
+        ;
+        // Build the focus-specific content.
+        if (focus === 'cost') {
+            if (!data.hasExec)
+                return `<div class="focus-hero noop"><strong>Fix Focus: Cost per execution</strong> — execution data isn't available for this account, so per-request cost can't be measured. Switch Fix Focus back to <em>Show everything</em> or pick a different metric.</div>`;
+            const L = cmp.lenses.perExec;
+            const v = verdict(L.tgtCh, L.netCh, 'network', 'per-request cost');
+            const ranked = rankByMetric(cmp.perSiteRaw, r => r.costCh, target);
+            return `<div class="focus-hero" data-focus="cost">
+        <div class="fh-head">
+          <div class="fh-h-l"><span class="fh-eyebrow">FIX FOCUS — cost per execution</span><h3 class="fh-title">Did each request get cheaper?</h3></div>
+          <div class="fh-hero-num ${v.cls}">${v.heroLbl}<span class="fh-hero-unit">vs network</span></div>
+        </div>
+        <div class="fh-body">
+          ${row(tgtLbl, L.tgtBefore, L.tgtAfter, L.tgtCh, v => fmtD(v, 3), 'sec/req')}
+          ${ctrlLbl !== netLbl ? row(ctrlLbl, L.ctrlBefore, L.ctrlAfter, L.ctrlCh, v => fmtD(v, 3), 'sec/req') : ''}
+          ${row(netLbl, L.netBefore, L.netAfter, L.netCh, v => fmtD(v, 3), 'sec/req')}
+        </div>
+        <div class="fh-verdict ${v.cls}">${v.text}</div>
+        ${miniRank(ranked, v => fmtD(v, 3), 'sec/req')}
+      </div>`;
+        }
+        if (focus === 'execs') {
+            if (!data.hasExec)
+                return `<div class="focus-hero noop"><strong>Fix Focus: Execution volume</strong> — execution data isn't available for this account. Switch to a different focus or back to <em>Show everything</em>.</div>`;
+            const L = cmp.lenses.exec;
+            const v = verdict(L.tgtCh, L.netCh, 'network', 'request volume');
+            const ranked = rankByMetric(cmp.perSiteRaw, r => r.exCh, target);
+            return `<div class="focus-hero" data-focus="execs">
+        <div class="fh-head">
+          <div class="fh-h-l"><span class="fh-eyebrow">FIX FOCUS — execution volume</span><h3 class="fh-title">Did request volume actually drop?</h3></div>
+          <div class="fh-hero-num ${v.cls}">${v.heroLbl}<span class="fh-hero-unit">vs network</span></div>
+        </div>
+        <div class="fh-body">
+          ${row(tgtLbl, L.tgtBefore, L.tgtAfter, L.tgtCh, fmtN, 'requests/day')}
+          ${ctrlLbl !== netLbl ? row(ctrlLbl, L.ctrlBefore, L.ctrlAfter, L.ctrlCh, fmtN, 'requests/day') : ''}
+          ${row(netLbl, L.netBefore, L.netAfter, L.netCh, fmtN, 'requests/day')}
+        </div>
+        <div class="fh-verdict ${v.cls}">${v.text}</div>
+        ${miniRank(ranked, fmtN, 'requests/day')}
+      </div>`;
+        }
+        if (focus === 'cpu') {
+            const L = cmp.lenses.cpu;
+            const v = verdict(L.tgtCh, L.netCh, 'network', 'CPU consumption');
+            const ranked = rankByMetric(cmp.perSiteRaw, r => r.pctCh, target);
+            const counterBit = (cmp.savedCpuPerDay !== null && cmp.expectedAfter !== null) ? `<div class="fh-counter">Counterfactual: had the target drifted with the network, after-CPU would sit at <strong>${fmtN(cmp.expectedAfter)}</strong>; actual is <strong>${fmtN(cmp.tAvgA)}</strong> — a net <strong class="${cmp.savedCpuPerDay >= 0 ? 'cg' : 'cr'}">${cmp.savedCpuPerDay >= 0 ? 'saving' : 'loss'} of ${fmtN(Math.abs(cmp.savedCpuPerDay))}</strong> CPU sec/day.</div>` : '';
+            return `<div class="focus-hero" data-focus="cpu">
+        <div class="fh-head">
+          <div class="fh-h-l"><span class="fh-eyebrow">FIX FOCUS — CPU seconds</span><h3 class="fh-title">Did total CPU time actually fall?</h3></div>
+          <div class="fh-hero-num ${v.cls}">${v.heroLbl}<span class="fh-hero-unit">vs network</span></div>
+        </div>
+        <div class="fh-body">
+          ${row(tgtLbl, L.tgtBefore, L.tgtAfter, L.tgtCh, fmtN, 'CPU sec/day')}
+          ${ctrlLbl !== netLbl ? row(ctrlLbl, L.ctrlBefore, L.ctrlAfter, L.ctrlCh, fmtN, 'CPU sec/day') : ''}
+          ${row(netLbl, L.netBefore, L.netAfter, L.netCh, fmtN, 'CPU sec/day')}
+        </div>
+        <div class="fh-verdict ${v.cls}">${v.text}</div>
+        ${counterBit}
+        ${miniRank(ranked, fmtN, 'CPU sec/day')}
+      </div>`;
+        }
+        if (focus === 'memory') {
+            if (!data.hasMem)
+                return `<div class="focus-hero noop"><strong>Fix Focus: Memory used</strong> — memory data isn't available for this account.</div>`;
+            const mbAvg = avgAll(cmp.mB), maAvg = avgAll(cmp.mA);
+            const memCh = pctCh(mbAvg, maAvg);
+            // Account-wide memory only — SG doesn't report per-site. We surface correlation
+            // with target's CPU share so the user can argue "my fix reduced the dominant CPU
+            // consumer → memory followed". Not a DiD; a narrative correlation.
+            const shareBefore = cmp.tAvgB && avgAll(cmp.aB) ? cmp.tAvgB / avgAll(cmp.aB) * 100 : null;
+            const shareAfter = cmp.tAvgA && avgAll(cmp.aA) ? cmp.tAvgA / avgAll(cmp.aA) * 100 : null;
+            const shareCh = pctCh(shareBefore, shareAfter);
+            const cls = memCh === null ? 'cn' : memCh <= -10 ? 'cg' : memCh <= -3 ? 'cw2' : memCh >= 5 ? 'cr' : 'cn';
+            const heroLbl = memCh === null ? '—' : `${memCh > 0 ? '+' : ''}${memCh.toFixed(1)}%`;
+            let text;
+            if (memCh === null)
+                text = 'Insufficient memory data over the window.';
+            else if (memCh <= -10 && shareCh !== null && shareCh < -5)
+                text = `✅ <strong>Account memory dropped ${Math.abs(memCh).toFixed(0)}%</strong> while ${esc(site)}'s CPU share fell from ${fmtD(shareBefore, 1)}% to ${fmtD(shareAfter, 1)}%. The two move together — strong signal the fix freed the memory.`;
+            else if (memCh <= -10)
+                text = `✅ Account memory dropped ${Math.abs(memCh).toFixed(0)}%, but target's CPU share moved by ${signStr(shareCh)} — the drop may have come from a different site. Cross-check the All-Sites Ranking below.`;
+            else if (memCh < -3)
+                text = `⚠️ Modest memory decrease (${memCh.toFixed(0)}%). Per-site memory isn't reported by SiteGround, so attribution to the target requires looking at which site's CPU dropped most.`;
+            else if (Math.abs(memCh) <= 3)
+                text = `→ Memory essentially unchanged (${signStr(memCh)}). If the fix targeted memory specifically, it didn't show up at the server level — could mean the fix worked but memory is dominated by a different site.`;
+            else
+                text = `🔴 Memory <em>rose</em> ${memCh.toFixed(0)}% over the window. Investigate.`;
+            return `<div class="focus-hero" data-focus="memory">
+        <div class="fh-head">
+          <div class="fh-h-l"><span class="fh-eyebrow">FIX FOCUS — memory used</span><h3 class="fh-title">Did memory pressure drop?</h3></div>
+          <div class="fh-hero-num ${cls}">${heroLbl}<span class="fh-hero-unit">account avg</span></div>
+        </div>
+        <div class="fh-body">
+          ${row('Account peak memory', mbAvg, maAvg, memCh, v => fmtD(v, 2), 'GB avg/day')}
+          ${row(`Target CPU share`, shareBefore, shareAfter, shareCh, v => fmtD(v, 2), '%')}
+        </div>
+        <div class="fh-note">⚠️ <strong>SiteGround does not report per-site memory.</strong> Comparison is account-wide; per-site attribution requires correlating with each site's CPU share movement.</div>
+        <div class="fh-verdict ${cls}">${text}</div>
+      </div>`;
+        }
+        if (focus === 'cores') {
+            const kbAvg = avgAll(cmp.kB), kaAvg = avgAll(cmp.kA);
+            const corCh = pctCh(kbAvg, kaAvg);
+            const corLimit = data.currentCoreLimit;
+            const shareBefore = cmp.tAvgB && avgAll(cmp.aB) ? cmp.tAvgB / avgAll(cmp.aB) * 100 : null;
+            const shareAfter = cmp.tAvgA && avgAll(cmp.aA) ? cmp.tAvgA / avgAll(cmp.aA) * 100 : null;
+            const shareCh = pctCh(shareBefore, shareAfter);
+            const peakBefore = Math.max(0, ...cmp.kB, 0), peakAfter = Math.max(0, ...cmp.kA, 0);
+            const peakCh = pctCh(peakBefore, peakAfter);
+            const cls = corCh === null ? 'cn' : corCh <= -10 ? 'cg' : corCh <= -3 ? 'cw2' : corCh >= 5 ? 'cr' : 'cn';
+            const heroLbl = corCh === null ? '—' : `${corCh > 0 ? '+' : ''}${corCh.toFixed(1)}%`;
+            let text;
+            if (corCh === null)
+                text = 'Insufficient cores-in-use data over the window.';
+            else if (corCh <= -10 && shareCh !== null && shareCh < -5)
+                text = `✅ <strong>Cores in use dropped ${Math.abs(corCh).toFixed(0)}%</strong> while ${esc(site)}'s CPU share fell from ${fmtD(shareBefore, 1)}% to ${fmtD(shareAfter, 1)}%. Correlation strongly suggests the fix released the cores.`;
+            else if (corCh <= -10)
+                text = `✅ Cores in use dropped ${Math.abs(corCh).toFixed(0)}%, but target's CPU share moved by ${signStr(shareCh)} — the relief may have come from a different site.`;
+            else if (corCh < -3)
+                text = `⚠️ Modest cores-in-use decrease (${corCh.toFixed(0)}%). For a more sensitive read, check whether peak cores fell — peak relief matters more than average for capacity headroom.`;
+            else if (Math.abs(corCh) <= 3)
+                text = `→ Cores in use essentially unchanged (${signStr(corCh)}). The fix did not reduce average concurrent load at the server level.`;
+            else
+                text = `🔴 Cores in use <em>rose</em> ${corCh.toFixed(0)}% — capacity headroom shrank during this window.`;
+            return `<div class="focus-hero" data-focus="cores">
+        <div class="fh-head">
+          <div class="fh-h-l"><span class="fh-eyebrow">FIX FOCUS — server cores in use</span><h3 class="fh-title">Did concurrent server load drop?</h3></div>
+          <div class="fh-hero-num ${cls}">${heroLbl}<span class="fh-hero-unit">account avg</span></div>
+        </div>
+        <div class="fh-body">
+          ${row('Avg cores in use', kbAvg, kaAvg, corCh, v => fmtD(v, 2), `of ${corLimit}`)}
+          ${row('Peak cores in use', peakBefore, peakAfter, peakCh, v => fmtD(v, 2), `of ${corLimit}`)}
+          ${row(`Target CPU share`, shareBefore, shareAfter, shareCh, v => fmtD(v, 2), '%')}
+        </div>
+        <div class="fh-note">⚠️ <strong>Cores in use are server-wide.</strong> SiteGround doesn't report per-site cores, so attribution requires correlating with each site's CPU share movement.</div>
+        <div class="fh-verdict ${cls}">${text}</div>
+      </div>`;
+        }
+        if (focus === 'combo') {
+            // Multi-metric scorecard — one row per metric, DiD vs network where the metric
+            // supports per-site comparison (cost/execs/cpu) or noted as server-wide for
+            // memory and cores. Gives a single-glance verdict across all axes.
+            const Lc = cmp.lenses.cpu, Le = cmp.lenses.exec, Lp = cmp.lenses.perExec;
+            const mbAvg = avgAll(cmp.mB), maAvg = avgAll(cmp.mA), memCh = pctCh(mbAvg, maAvg);
+            const kbAvg = avgAll(cmp.kB), kaAvg = avgAll(cmp.kA), corCh = pctCh(kbAvg, kaAvg);
+            const scoreRow = (label, tCh, refCh, ext) => {
+                const did = (tCh !== null && refCh !== null) ? tCh - refCh : null;
+                const cls = did === null ? 'cn' : did <= -10 ? 'cg' : did >= 10 ? 'cr' : Math.abs(did) > 3 ? 'cw2' : 'cn';
+                const didLbl = did === null ? '—' : `${did > 0 ? '+' : ''}${did.toFixed(1)} pp`;
+                const tLbl = tCh === null ? '—' : signStr(tCh);
+                const rLbl = refCh === null ? '—' : signStr(refCh);
+                return `<tr><td>${esc(label)}</td><td class="r ${clsCh(tCh)}">${tLbl}</td><td class="r ${clsCh(refCh)}">${rLbl}</td><td class="r ${cls}"><strong>${didLbl}</strong></td><td class="combo-ext">${ext}</td></tr>`;
+            }
+            ;
+            const serverRow = (label, before, after, ch, fmtFn, unit) => {
+                const cls = ch === null ? 'cn' : ch <= -10 ? 'cg' : ch >= 5 ? 'cr' : Math.abs(ch) > 3 ? 'cw2' : 'cn';
+                return `<tr class="combo-server"><td>${esc(label)} <span style="color:var(--text-faint);font-size:10px">server-wide</span></td><td class="r ${cls}">${ch === null ? '—' : signStr(ch)}</td><td class="r cd">—</td><td class="r cd">—</td><td class="combo-ext">${before === null ? '—' : fmtFn(before)} → ${after === null ? '—' : fmtFn(after)} ${unit}</td></tr>`;
+            }
+            ;
+            return `<div class="focus-hero" data-focus="combo">
+        <div class="fh-head">
+          <div class="fh-h-l"><span class="fh-eyebrow">FIX FOCUS — combination</span><h3 class="fh-title">Multi-metric scorecard</h3></div>
+        </div>
+        <div class="fh-body">
+          <table class="combo-tbl"><thead><tr><th>Metric</th><th class="r">Target</th><th class="r">Network</th><th class="r">Net (DiD)</th><th>Detail</th></tr></thead>
+          <tbody>
+            ${data.hasExec ? scoreRow('Cost per execution', Lp.tgtCh, Lp.netCh, `${Lp.tgtBefore === null ? '—' : fmtD(Lp.tgtBefore, 3)} → ${Lp.tgtAfter === null ? '—' : fmtD(Lp.tgtAfter, 3)} sec/req`) : ''}
+            ${data.hasExec ? scoreRow('Execution volume', Le.tgtCh, Le.netCh, `${fmtN(Le.tgtBefore)} → ${fmtN(Le.tgtAfter)} req/day`) : ''}
+            ${scoreRow('CPU seconds', Lc.tgtCh, Lc.netCh, `${fmtN(Lc.tgtBefore)} → ${fmtN(Lc.tgtAfter)} CPU sec/day`)}
+            ${data.hasMem ? serverRow('Account memory', mbAvg, maAvg, memCh, v => fmtD(v, 2), 'GB') : ''}
+            ${serverRow('Cores in use', kbAvg, kaAvg, corCh, v => fmtD(v, 2), `of ${data.currentCoreLimit}`)}
+          </tbody></table>
+        </div>
+        <div class="fh-note">Each per-site row compares target's % change to the whole network's % change. Server-wide rows show account-level movement (per-site not reported by SiteGround). Net column is target − network in percentage points; negative is a peer-relative win.</div>
+      </div>`;
+        }
+        return '';
+    }
+    ;
+
     const renderCmpOut = data => {
         const out = document.getElementById('cmp-out');
         if (!out)
@@ -4595,8 +5191,28 @@ svg.spark{display:inline-block;vertical-align:middle}
         const daysBefore = +(document.getElementById('cmp-before')?.value || S.ui.daysBefore);
         const daysAfter = +(document.getElementById('cmp-after')?.value || S.ui.daysAfter);
         const ctrlPreset = document.getElementById('cmp-ctrl')?.value || S.ui.ctrlPreset;
+        const fixFocus = document.getElementById('cmp-focus')?.value || S.ui.fixFocus || 'auto';
+        const weekdaysOnly = !!document.getElementById('cmp-weekdays')?.checked;
+        const minActivityCpu = +(document.getElementById('cmp-minact')?.value || 0);
+        const useCustom = !!S.ui.useCustomDates;
+        const cBefStart = document.getElementById('cmp-bstart')?.value || null;
+        const cAftEnd = document.getElementById('cmp-aend')?.value || null;
+        // When using custom date ranges, derive the window from the explicit dates rather
+        // than ±N days. Before-end is the day before the fix; after-start is the fix date.
+        const buildOpts = {
+            weekdaysOnly,
+            minActivityCpu
+        };
+        if (useCustom && cBefStart)
+            buildOpts.bStart = cBefStart;
+        if (useCustom && cBefStart)
+            buildOpts.bEnd = addDays(fixDate, -1);
+        if (useCustom && cAftEnd)
+            buildOpts.aStart = fixDate;
+        if (useCustom && cAftEnd)
+            buildOpts.aEnd = cAftEnd;
         // Detect whether key inputs changed since last run; if so, recompute the frozen control.
-        const inputsKey = `${target}|${fixDate}|${ctrlPreset}`;
+        const inputsKey = `${target}|${fixDate}|${ctrlPreset}|${useCustom ? cBefStart + ':' + cAftEnd : daysBefore + ':' + daysAfter}|${weekdaysOnly}|${minActivityCpu}`;
         const inputsChanged = S.ui.ctrlInputsKey !== inputsKey;
         Object.assign(S.ui, {
             target,
@@ -4604,6 +5220,11 @@ svg.spark{display:inline-block;vertical-align:middle}
             daysBefore,
             daysAfter,
             ctrlPreset,
+            fixFocus,
+            weekdaysOnly,
+            minActivityCpu,
+            customBeforeStart: useCustom ? cBefStart : S.ui.customBeforeStart,
+            customAfterEnd: useCustom ? cAftEnd : S.ui.customAfterEnd,
             ctrlInputsKey: inputsKey
         });
         let ctrlDoms;
@@ -4616,7 +5237,7 @@ svg.spark{display:inline-block;vertical-align:middle}
             ctrlDoms = resolveCtrl(data, target, ctrlPreset);
             S.ui.frozenCtrl = null;
         }
-        const cmp = buildCmp(data, target, fixDate, daysBefore, daysAfter, ctrlDoms);
+        const cmp = buildCmp(data, target, fixDate, daysBefore, daysAfter, ctrlDoms, buildOpts);
         const interp = interpret(cmp, target);
         const h = buildHourlyData();
         const tSite = data.siteStats.find(s => s.domain === target);
@@ -4848,15 +5469,32 @@ svg.spark{display:inline-block;vertical-align:middle}
         ${renderLens(cmp.lenses.perExec, v => fmtD(v, 3) + 's')}
       </div>
     </div>`;
-        const excludedHtml = cmp.excludedFromNet.length ? `<div class="excl-banner" data-tip="${esc('<strong>Excluded sites</strong> are dropped from every per-site calculation: control group, network, ranking, and DiD. ' + cmp.excludedFromNet.length + ' sites currently excluded: ' + cmp.excludedFromNet.join(', '))}"><span style="font-weight:700">🚫 ${cmp.excludedFromNet.length} sites excluded</span> from the network + ranking comparisons (managed in the Sites tab)</div>` : '';
+        const excludedHtml = cmp.excludedFromNet.length ? `<div class="excl-banner" data-tip="${esc('<strong>Excluded sites</strong> are dropped from every per-site calculation: control group, network, ranking, and DiD. ' + cmp.excludedFromNet.length + ' sites currently excluded: ' + cmp.excludedFromNet.join(', '))}"><span style="font-weight:700">🚫 ${cmp.excludedFromNet.length} sites excluded</span> from the network + ranking comparisons · <span style="text-decoration:underline">click to manage</span></div>` : '';
+        const focusHero = renderFocusHero(cmp, fixFocus, target, data, ctrlDoms, ctrlLabel);
+        // When a specific Fix Focus is chosen, the existing CPU-only Net Effect hero (neHtml)
+        // becomes redundant with the new hero. Keep it only for CPU focus + 'auto'; suppress
+        // for cost/execs/memory/cores/combo so the page isn't double-stating the same number.
+        const showNeHero = fixFocus === 'auto' || fixFocus === 'cpu';
+        // Filter row context: weekdays-only or minActivity values pinned to the top so the
+        // reader knows the comparison they're looking at is narrowed.
+        const filterCtx = [];
+        if (weekdaysOnly)
+            filterCtx.push('weekdays only (Sat/Sun dropped)');
+        if (minActivityCpu > 0)
+            filterCtx.push(`min peer activity ${fmtN(minActivityCpu)} CPU sec/day`);
+        if (useCustom && cBefStart && cAftEnd)
+            filterCtx.push('custom date range');
+        const filterCtxHtml = filterCtx.length ? `<div class="filter-ctx">🔎 Filters active: <strong>${filterCtx.join(' · ')}</strong></div>` : '';
         const summTxt = buildSummTxt(cmp, target, fixDate, ctrlDoms, interp);
         out.innerHTML = `
     <div class="sbar"><strong>${esc(target)}</strong> &nbsp;·&nbsp; Fix: <strong>${esc(fixDate)}</strong> &nbsp;·&nbsp; Before: ${esc(cmp.bStart)}→${esc(cmp.bEnd)} (<strong>${cmp.bDates.length}</strong> days) &nbsp;·&nbsp; After: ${esc(cmp.aStart)}→${esc(cmp.aEnd)} (<strong>${cmp.aDates.length}</strong> days) &nbsp;·&nbsp; Control${ctrlPreset === 'auto' ? ' (frozen)' : ''} (${ctrlDoms.length}): <span style="color:#94a3b8">${esc(ctrlDoms.length > 6 ? ctrlDoms.slice(0, 6).join(', ') + ` +${ctrlDoms.length - 6} more` : ctrlDoms.join(', '))}</span></div>
     ${excludedHtml}
+    ${filterCtxHtml}
+    ${focusHero}
     ${lensesHtml}
     ${curStatHtml}
     ${credHtml}
-    ${neHtml}
+    ${showNeHero ? neHtml : ''}
     ${pairedHtml}
     ${interp.length ? `<div class="interp"><div class="interp-t">📊 Data Interpretation</div>${interp.map(l => `<div class="interp-item">${l}</div>`).join('')}</div>` : ''}
     <div class="cmps">${cards.join('')}</div>
@@ -7182,12 +7820,24 @@ window.addEventListener('load', function() {
                     btn.classList.toggle('on', S.ui.explain);
                 return;
             }
-            // Site-exclusion chip: click pops the user over to the Sites tab where the per-row
-            // toggle controls actually live. Cleaner than a second dropdown UI in the header.
+            // Site-exclusion chip: click opens the inclusion/exclusion panel directly so
+            // the user can toggle any site from anywhere in the app without leaving the
+            // current tab. Per-row exclude buttons on the Sites tab still work too.
             if (e.target?.closest('#sgd-excl-chip')) {
-                S.ui.tab = 'sites';
-                root.querySelectorAll('.sgd-tab').forEach(t => t.classList.toggle('on', t.dataset.tab === 'sites'));
-                renderTab(S.data);
+                if (S.data)
+                    openSiteInclusionPanel(S.data, () => renderTab(S.data));
+                return;
+            }
+            // Excluded-from-network banner on the Before/After tab also opens the panel.
+            if (e.target?.closest('.excl-banner')) {
+                if (S.data)
+                    openSiteInclusionPanel(S.data, () => renderTab(S.data));
+                return;
+            }
+            // Explicit "Manage Sites" button in the Before/After filter row.
+            if (e.target?.closest('[data-a="manage-sites"]')) {
+                if (S.data)
+                    openSiteInclusionPanel(S.data, () => renderTab(S.data));
                 return;
             }
             // Per-row exclude toggle (Sites tab) or banner pill remove. Re-derive siteStats
@@ -7250,7 +7900,8 @@ window.addEventListener('load', function() {
                 const daysAfter = +(document.getElementById('cmp-after')?.value || S.ui.daysAfter);
                 const ctrlPreset = document.getElementById('cmp-ctrl')?.value || S.ui.ctrlPreset;
                 const ctrlDoms = (ctrlPreset === 'auto' && S.ui.frozenCtrl?.length) ? S.ui.frozenCtrl : resolveCtrl(S.data, target, ctrlPreset);
-                const cmp = buildCmp(S.data, target, fixDate, daysBefore, daysAfter, ctrlDoms);
+                const cmpOpts = buildCmpOptsFromUI(fixDate);
+                const cmp = buildCmp(S.data, target, fixDate, daysBefore, daysAfter, ctrlDoms, cmpOpts);
                 const interp = interpret(cmp, target);
                 generateBrandedReport(S.data, cmp, target, fixDate, ctrlDoms, interp);
             }
@@ -7272,7 +7923,8 @@ window.addEventListener('load', function() {
                     const daysAfter = +(document.getElementById('cmp-after')?.value || S.ui.daysAfter);
                     const ctrlPreset = document.getElementById('cmp-ctrl')?.value || S.ui.ctrlPreset;
                     const ctrlDoms = (ctrlPreset === 'auto' && S.ui.frozenCtrl?.length) ? S.ui.frozenCtrl : resolveCtrl(S.data, target, ctrlPreset);
-                    const cmp = buildCmp(S.data, target, fixDate, daysBefore, daysAfter, ctrlDoms);
+                    const cmpOpts = buildCmpOptsFromUI(fixDate);
+                    const cmp = buildCmp(S.data, target, fixDate, daysBefore, daysAfter, ctrlDoms, cmpOpts);
                     const interp = interpret(cmp, target);
                     generateBrandedReport(S.data, cmp, target, fixDate, ctrlDoms, interp);
                 } else if (t === 'trends' || t === 'raw' || t === 'guide') {
