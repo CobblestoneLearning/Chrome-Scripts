@@ -15,20 +15,20 @@ The script catalog below is regenerated automatically by GitHub Actions on every
 Add an `OPENAI_API_KEY` repository secret (Settings → Secrets and variables → Actions). Optionally override the model with an `OPENAI_MODEL` repo variable. The workflow uses the default `GITHUB_TOKEN` to commit the regenerated README, so no PAT is needed unless branch protection rules block bot pushes to `main`.
 
 <!-- AUTO-GENERATED:START — do not edit below this line -->
-<!-- Last generated: 2026-05-26T19:09:27.862Z -->
+<!-- Last generated: 2026-05-28T10:10:34.881Z -->
 
 ## Scripts
 
 ### `better-sg-reports.js`
 
-This script creates a SiteGround performance dashboard for monitoring and analyzing server and site metrics. It fetches data, visualizes server health, site usage, and trend analysis, allowing users to generate reports and identify issues quickly.
+This script creates a comprehensive, branded dashboard for analyzing and visualizing SiteGround hosting metrics. It helps users interpret server health, site performance, and the effect of optimizations through charts, metrics, and detailed reports.
 
 **Usage**
 
-- Open in the browser console on a SiteGround hosting dashboard page.
-- Run the bookmarklet to initialize and display the monitoring interface.
-- It automatically intercepts API responses to gather real-time data.
-- Use the UI buttons to navigate tabs, generate reports, or adjust settings.
+- Visit any SiteGround site and run the script as a browser bookmarklet.
+- It intercepts API responses from SiteGround's management console to gather data.
+- It opens a custom overlay interface where you can view reports, generate PDFs, export CSVs, and compare metrics before and after site fixes.
+- Ensure pop-ups are allowed, as the dashboard opens in new tabs to display reports and data visualizations.
 
 **jsDelivr URL** (paste into DevTools Console, or load via the bookmarklet below):
 
