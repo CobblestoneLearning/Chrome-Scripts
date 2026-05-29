@@ -31,7 +31,7 @@
         core_pct: '<strong>Cores in Use</strong> — how many CPU cores the whole server is using right now (or on a given day).<br><br>SiteGround\'s API returns the raw value as "% of one core" — 100% = one full core, 200% = two cores, etc. We divide by 100 to get cores. So a reading of 0.6 cores on a 9-core plan means you\'re using 6.7% of plan capacity. The number is <strong>plan-immune</strong>: 0.6 cores is 0.6 cores whether the plan is 7 or 9.<br><br>SiteGround measures in 15-second windows.<br><br><span style="color:#4ade80">✅ Comfortable:</span> below 50% of plan<br><span style="color:#fbbf24">⚠️ Elevated:</span> 50–75% of plan<br><span style="color:#f87171">🔴 Critical:</span> 75%+ of plan — requests queued, users experience slowdowns now<br><br><em>Short spikes are normal. Sustained readings near saturation require investigation.</em>',
         control_group: '<strong>Control Group</strong> — unmodified sites used as a comparison baseline.<br><br>If all sites get quieter after your fix, that could be a quiet week — not your fix. The control group distinguishes fix effect from ambient traffic reduction.<br><br><span style="color:#4ade80">✅ Strong fix evidence:</span> target drops, control stays flat or rises<br><span style="color:#fbbf24">⚠️ Ambiguous:</span> both dropped but target more than control<br><span style="color:#f87171">🔴 Weak evidence:</span> both dropped proportionally — likely just a quiet period',
         network_change: '<strong>Network Change</strong> — every other active site on the account, summed.<br><br>The "control group" is a small curated sample (e.g. Top 5 or LMS Core); the network is the <em>whole rest of the account</em>. It\'s the broadest possible ambient-traffic reference.<br><br><span style="color:#4ade80">✅ Useful:</span> if the network rose while your target fell, the fix is clearly site-specific<br><span style="color:#f87171">🔴 Warning:</span> if the network fell by a similar amount, much of your target\'s improvement may just be a quiet week',
-        net_effect: '<strong>Net Effect (Difference-in-Differences)</strong> — the target\'s % change <em>minus</em> the network\'s % change.<br><br>This is the single number that answers "did my fix actually do anything?" — it removes the ambient drift that hit every site.<br><br><span style="color:#4ade80">✅ Strong fix:</span> strongly negative (e.g. -25 pp) — target dropped much more than the network<br><span style="color:#fbbf24">→ Noise:</span> near 0 — target moved with the network, no isolated effect<br><span style="color:#f87171">🔴 Regression:</span> positive — target got worse relative to peers<br><br><em>Reported in percentage points, not %. A net effect of -20 pp means the target fell 20 percentage points more than the network did.</em>',
+        net_effect: '<strong>Net Effect (Difference-in-Differences)</strong> — the target\'s % change <em>minus</em> the comparison group\'s % change.<br><br>The comparison group is whatever you pick in <strong>Compare Against</strong>: your selected like-for-like peers, or the whole network if you choose that. This is the single number that answers "did my fix actually do anything?" — it removes the ambient drift the comparison group also saw.<br><br><span style="color:#4ade80">✅ Strong fix:</span> strongly negative (e.g. -25 pp) — target dropped much more than the comparison group<br><span style="color:#fbbf24">→ Noise:</span> near 0 — target moved with the group, no isolated effect<br><span style="color:#f87171">🔴 Regression:</span> positive — target got worse relative to peers<br><br><em>Reported in percentage points, not %. A net effect of -20 pp means the target fell 20 percentage points more than the comparison group did. When you pick a small group the credibility score drops — a 2-site baseline is noisier and easier to cherry-pick than the whole network.</em>',
         expected_after: '<strong>Expected After (Counterfactual)</strong> — what the target\'s after-CPU would be if it had drifted at the same rate as the rest of the network.<br><br>Comparing <em>actual after</em> against this number is the cleanest single-number "savings" estimate.<br><br><span style="color:#4ade80">✅ Saved:</span> actual < expected — the fix kept CPU below what ambient drift alone predicted<br><span style="color:#f87171">🔴 Lost:</span> actual > expected — the target underperformed peers',
         site_rank: '<strong>Site Rank</strong> — where the target sits among all active sites when ranked by before→after % change.<br><br>Rank 1 = biggest improvement (largest CPU drop). Rank N = biggest regression.<br><br>The percentile reframes that as "the target improved more than X% of sites." Combined with the network change, it tells you whether your target was uniquely improved or merely went along for the ride.',
         plan_change: '<strong>Plan Change</strong> — the date SiteGround upgraded or downgraded your account\'s cores or memory.<br><br>Detected automatically from <code>limits_list</code> in the API response.<br><br><span style="color:#4ade80">✅ Every metric on this dashboard is plan-immune:</span> CPU seconds, executions, cores in use, and GB used are all absolute measurements. A day that used 1.47 cores is shown as 1.47 cores regardless of whether the plan was 7-core or 9-core on that day.<br><br><span style="color:#27aae1">ℹ️ What changes after the upgrade:</span> the "% of plan" subtitle next to each absolute reading — 1.47 cores was 21% of 7-core plan, now it\'s 16.3% of 9-core plan. The cores number is the same; the % framing scales.<br><br><em>The purple marker on charts is purely informational.</em>',
@@ -1781,6 +1781,19 @@
           , nAvgA = avgAll(nA);
         const targetPctCh = pctCh(tAvgB, tAvgA);
         const networkPctCh = pctCh(nAvgB, nAvgA);
+        // ── Baseline = the user's SELECTED comparison group (ctrlDoms) ──────────────
+        // The headline verdict (Net Effect, paired DiD, significance, credibility) is graded
+        // against the group the user picked in "Compare Against", NOT the whole network. The
+        // whole network stays computed as a labelled CONTEXT reference. When the selected group
+        // IS the whole network (preset "network", or "auto" happening to equal it), the two
+        // coincide and behaviour is identical to before — that's the regression anchor.
+        const cAvgB = avgAll(cB)
+          , cAvgA = avgAll(cA);
+        const controlPctCh = pctCh(cAvgB, cAvgA);
+        const ctrlIsNetwork = ctrlDoms.length === networkDoms.length && ctrlDoms.every(d => networkDoms.includes(d));
+        // baselinePctCh drives every verdict below. Falls back to the network only when the
+        // selected group is empty (e.g. min-activity pruned everything), so a verdict still renders.
+        const baselinePctCh = (controlPctCh !== null) ? controlPctCh : networkPctCh;
         // ── Three-lens summary: executions, CPU seconds, time-per-execution ────────
         // Each lens computes the "per day" metric for target, control group, and network,
         // then a % change before→after. Per-day averaging is critical: if the user picks
@@ -1848,10 +1861,13 @@
             L.ctrlCh = safePctCh(L.ctrlBefore, L.ctrlAfter);
             L.netCh = safePctCh(L.netBefore, L.netAfter);
         }
-        // DiD net effect: target % change minus network % change. Negative = fix beat the network.
-        const netEffectPct = (targetPctCh !== null && networkPctCh !== null) ? targetPctCh - networkPctCh : null;
-        // Counterfactual: if the target had drifted with the network, where would after-CPU sit?
-        const expectedAfter = (networkPctCh !== null && tAvgB > 0) ? tAvgB * (1 + networkPctCh / 100) : null;
+        // DiD net effect: target % change minus BASELINE % change (baseline = selected group).
+        // Negative = the fix beat the comparison group. Network kept separately as context.
+        const netEffectPct = (targetPctCh !== null && baselinePctCh !== null) ? targetPctCh - baselinePctCh : null;
+        // Net Effect vs the whole network — retained as a context reading alongside the headline.
+        const netEffectPctVsNetwork = (targetPctCh !== null && networkPctCh !== null) ? targetPctCh - networkPctCh : null;
+        // Counterfactual: if the target had drifted with the BASELINE group, where would after-CPU sit?
+        const expectedAfter = (baselinePctCh !== null && tAvgB > 0) ? tAvgB * (1 + baselinePctCh / 100) : null;
         // Positive = saved CPU/day vs the counterfactual; negative = the target did worse than peers.
         const savedCpuPerDay = expectedAfter !== null ? expectedAfter - tAvgA : null;
         // ── Per-site change, activity classification, exec-growth efficiency ───────
@@ -1925,7 +1941,7 @@
             bByDow.get(w).push(d);
         }
         );
-        const tBPaired = [], tAPaired = [], nBPaired = [], nAPaired = [], dowsCovered = new Set();
+        const tBPaired = [], tAPaired = [], nBPaired = [], nAPaired = [], cBPaired = [], cAPaired = [], dowsCovered = new Set();
         aDates.forEach(ad => {
             const w = weekdayOf(ad);
             const candidates = bByDow.get(w);
@@ -1936,6 +1952,8 @@
                 tAPaired.push(data.sv(target, ad));
                 nBPaired.push(networkDoms.reduce( (s, dd) => s + data.sv(dd, bd), 0));
                 nAPaired.push(networkDoms.reduce( (s, dd) => s + data.sv(dd, ad), 0));
+                cBPaired.push(ctrlDoms.reduce( (s, dd) => s + data.sv(dd, bd), 0));
+                cAPaired.push(ctrlDoms.reduce( (s, dd) => s + data.sv(dd, ad), 0));
                 dowsCovered.add(w);
             }
         }
@@ -1944,16 +1962,20 @@
           , tAPAvg = avgAll(tAPaired);
         const nBPAvg = avgAll(nBPaired)
           , nAPAvg = avgAll(nAPaired);
+        const cBPAvg = avgAll(cBPaired)
+          , cAPAvg = avgAll(cAPaired);
         const targetPctChPaired = pctCh(tBPAvg, tAPAvg);
         const networkPctChPaired = pctCh(nBPAvg, nAPAvg);
-        const netEffectPctPaired = (targetPctChPaired !== null && networkPctChPaired !== null) ? targetPctChPaired - networkPctChPaired : null;
-        // DiD residuals: per paired day, target_day − (target_before_avg × network_growth_factor_for_that_day).
-        // The residual is "how much did the target deviate from the network's growth pattern on this day?"
-        // welchT on these vs zero gives a t-test of the *isolated* effect.
-        const networkGrowthFactor = (nBPAvg > 0) ? (nAPAvg / nBPAvg) : null;
-        const residualsA = (networkGrowthFactor !== null) ? tAPaired.map(v => v - (tBPAvg * networkGrowthFactor)) : [];
+        // Baseline (selected group) paired change drives the paired net effect; network kept for context.
+        const baselinePctChPaired = (pctCh(cBPAvg, cAPAvg) !== null) ? pctCh(cBPAvg, cAPAvg) : networkPctChPaired;
+        const netEffectPctPaired = (targetPctChPaired !== null && baselinePctChPaired !== null) ? targetPctChPaired - baselinePctChPaired : null;
+        // DiD residuals: per paired day, target_day − (target_before_avg × baseline_growth_factor).
+        // The residual is "how much did the target deviate from the BASELINE group's growth pattern?"
+        // welchT on these vs zero gives a t-test of the *isolated* effect against the selected peers.
+        const baselineGrowthFactor = (cBPAvg > 0) ? (cAPAvg / cBPAvg) : ((nBPAvg > 0) ? (nAPAvg / nBPAvg) : null);
+        const residualsA = (baselineGrowthFactor !== null) ? tAPaired.map(v => v - (tBPAvg * baselineGrowthFactor)) : [];
         // Compare residuals to a zero-mean reference (the before window after applying growth factor).
-        const residualsB = (networkGrowthFactor !== null) ? tBPaired.map(v => v - tBPAvg) : [];
+        const residualsB = (baselineGrowthFactor !== null) ? tBPaired.map(v => v - tBPAvg) : [];
         const statResid = residualsA.length >= 2 && residualsB.length >= 2 ? welchT(residualsB, residualsA) : null;
         // ── Plan-change straddle: does the window cross a plan upgrade/downgrade? ──
         const planStraddles = (data.planChanges || []).filter(c => c.date >= bStart && c.date <= aEnd);
@@ -1991,6 +2013,23 @@
                     score += 10;
                 else
                     reasons.push(`net effect not statistically significant on weekday-paired residuals (p=${statResid.p.toFixed(3)})`);
+            }
+            // Baseline-size penalty: the verdict is graded against the SELECTED comparison group.
+            // The whole network is the largest, least cherry-pickable sample, so it's never
+            // penalised; a curated subset trades robustness for like-for-like and is docked by
+            // how small (and therefore noisy / cherry-pickable) it is.
+            if (!ctrlIsNetwork) {
+                const bn = ctrlDoms.length;
+                if (bn < 2) {
+                    score -= 18;
+                    reasons.push(`comparison baseline is a single site — extremely cherry-pickable; treat the isolated-effect read as indicative only`);
+                } else if (bn < 3) {
+                    score -= 14;
+                    reasons.push(`only ${bn} sites in the comparison baseline — a small peer set is easy to cherry-pick and gives a noisy counterfactual`);
+                } else if (bn < 5) {
+                    score -= 7;
+                    reasons.push(`small comparison baseline (${bn} sites) — fine for like-for-like, but a wider group is more robust`);
+                }
             }
             score = Math.max(0, Math.min(100, score));
             const verdict = score >= 75 ? 'High' : score >= 50 ? 'Moderate' : score >= 25 ? 'Low' : 'Very Low';
@@ -2164,6 +2203,12 @@
             targetPctCh,
             networkPctCh,
             netEffectPct,
+            netEffectPctVsNetwork,
+            controlPctCh,
+            baselinePctCh,
+            ctrlIsNetwork,
+            cAvgB,
+            cAvgA,
             expectedAfter,
             savedCpuPerDay,
             perSite,
@@ -2175,12 +2220,17 @@
             tAPaired,
             nBPaired,
             nAPaired,
+            cBPaired,
+            cAPaired,
             tBPAvg,
             tAPAvg,
             nBPAvg,
             nAPAvg,
+            cBPAvg,
+            cAPAvg,
             targetPctChPaired,
             networkPctChPaired,
+            baselinePctChPaired,
             netEffectPctPaired,
             statResid,
             dowsCovered: [...dowsCovered].sort(),
@@ -2190,7 +2240,171 @@
     }
     ;
 
-    const interpret = (cmp, target) => {
+    // Per-day series for the chosen focus metric, so Welch's t-test runs on the RIGHT
+    // numbers (cost-per-request, executions, memory, cores) instead of always on CPU.
+    // Returns parallel before/after arrays, or null when the metric is unavailable.
+    const focusSeries = (cmp, focus) => {
+        if (focus === 'cpu')
+            return { b: cmp.tB, a: cmp.tA };
+        if (focus === 'execs')
+            return { b: cmp.eB, a: cmp.eA };
+        if (focus === 'memory')
+            return { b: cmp.mB, a: cmp.mA };
+        if (focus === 'cores')
+            return { b: cmp.kB, a: cmp.kA };
+        if (focus === 'cost') {
+            const b = [], a = [];
+            cmp.tB.forEach( (v, i) => { if (cmp.eB[i] > 0) b.push(v / cmp.eB[i]); } );
+            cmp.tA.forEach( (v, i) => { if (cmp.eA[i] > 0) a.push(v / cmp.eA[i]); } );
+            return { b, a };
+        }
+        return null;
+    }
+    ;
+
+    // Lay-person interpretation lines for a specific Fix Focus. Critically, this speaks ONLY
+    // to the chosen metric so a "cost per execution" report never contradicts itself with a
+    // CPU-time verdict like "No isolated fix effect". Order is deliberate:
+    //   1. what actually happened to the metric on the target (the headline the fix owns),
+    //   2. whether that change is isolated to this site vs. the network (DiD on the SAME metric),
+    //   3. statistical significance on that metric's daily series,
+    //   4. rank among comparable peers on that metric.
+    const focusNarrative = (cmp, focus, target, data) => {
+        const out = [];
+        const site = target.split('.')[0];
+        // Isolation is judged against the SELECTED comparison group (baseline). When that group
+        // is the whole network the two coincide and we keep the "network" wording (preserves the
+        // regression anchor); otherwise the prose names the selected peers.
+        const baseIsNet = !!cmp.ctrlIsNetwork;
+        const baseName = baseIsNet ? 'the network' : 'your selected peers';
+        const refCh = L => baseIsNet ? L.netCh : L.ctrlCh;
+        const sigLine = (st, label) => {
+            if (!st)
+                return null;
+            const p = st.p;
+            const sig = p < 0.05 ? '✅ statistically significant' : p < 0.1 ? '⚠️ marginally significant' : '🔴 not statistically significant';
+            return `${sig} day-to-day (Welch's t-test on daily ${label}, p=${p < 0.001 ? '<0.001' : p.toFixed(3)}${st.df ? `, df=${st.df.toFixed(1)}` : ''}).`;
+        }
+        ;
+        // ── Combination: one concise verdict line per metric ──
+        if (focus === 'combo') {
+            const line = (label, lens, fmtv, unit) => {
+                if (!lens || lens.tgtCh === null)
+                    return null;
+                const rc = refCh(lens);
+                const d = (lens.tgtCh !== null && rc !== null) ? lens.tgtCh - rc : null;
+                const ico = d === null ? '→' : d <= -10 ? '✅' : d >= 10 ? '🔴' : Math.abs(d) > 3 ? '⚠️' : '→';
+                const iso = d === null ? 'no peer comparison available' : d <= -10 ? `isolated to ${site} — beat ${baseName} by ${Math.abs(d).toFixed(0)} pp` : d < -5 ? `mostly isolated (${d.toFixed(0)} pp vs ${baseName})` : Math.abs(d) <= 5 ? `but ${baseName} moved similarly (${signStr(rc)}), so not clearly isolated` : `worse than ${baseName} by ${d.toFixed(0)} pp`;
+                return `${ico} <strong>${label}:</strong> ${signStr(lens.tgtCh)} on ${site} (${fmtv(lens.tgtBefore)} → ${fmtv(lens.tgtAfter)} ${unit}) — ${iso}.`;
+            }
+            ;
+            if (data.hasExec) {
+                const l1 = line('Cost per request', cmp.lenses.perExec, v => fmtD(v, 3), 'sec/req');
+                if (l1) out.push(l1);
+                const l2 = line('Request volume', cmp.lenses.exec, fmtN, 'req/day');
+                if (l2) out.push(l2);
+            }
+            const l3 = line('CPU time', cmp.lenses.cpu, fmtN, 'CPU sec/day');
+            if (l3) out.push(l3);
+            if (data.hasMem) {
+                const mb = avgAll(cmp.mB), ma = avgAll(cmp.mA), mc = pctCh(mb, ma);
+                if (mc !== null) out.push(`${mc <= -10 ? '✅' : mc >= 5 ? '🔴' : '→'} <strong>Memory (server-wide):</strong> ${signStr(mc)} (${fmtD(mb, 2)} → ${fmtD(ma, 2)} GB). Per-site memory isn't reported by SiteGround.`);
+            }
+            const kb = avgAll(cmp.kB), ka = avgAll(cmp.kA), kc = pctCh(kb, ka);
+            if (kc !== null) out.push(`${kc <= -10 ? '✅' : kc >= 5 ? '🔴' : '→'} <strong>Cores in use (server-wide):</strong> ${signStr(kc)} (${fmtD(kb, 2)} → ${fmtD(ka, 2)} of ${data.currentCoreLimit}).`);
+            return out;
+        }
+        // ── Server-wide metrics: memory + cores (SG reports no per-site figure) ──
+        if (focus === 'memory' || focus === 'cores') {
+            const isMem = focus === 'memory';
+            if (isMem && !data.hasMem) {
+                out.push(`⚠️ Memory data isn't available for this account, so a memory-specific verdict can't be produced.`);
+                return out;
+            }
+            const bAvg = avgAll(isMem ? cmp.mB : cmp.kB), aAvg = avgAll(isMem ? cmp.mA : cmp.kA);
+            const ch = pctCh(bAvg, aAvg);
+            const unit = isMem ? 'GB' : 'cores';
+            const noun = isMem ? 'peak memory in use' : 'cores in use';
+            const word = isMem ? 'memory' : 'cores';
+            const fmtv = v => fmtD(v, 2);
+            if (ch === null)
+                out.push(`→ Not enough ${noun} data over the window to judge.`);
+            else if (ch <= -10)
+                out.push(`✅ <strong>Server-wide ${noun} fell ${Math.abs(ch).toFixed(0)}%</strong> (${fmtv(bAvg)} → ${fmtv(aAvg)} ${unit}/day average) — a real reduction in what the server was carrying.`);
+            else if (ch < -3)
+                out.push(`⚠️ <strong>Server-wide ${noun} eased ${Math.abs(ch).toFixed(0)}%</strong> (${fmtv(bAvg)} → ${fmtv(aAvg)} ${unit}/day) — a modest improvement.`);
+            else if (Math.abs(ch) <= 3)
+                out.push(`→ <strong>Server-wide ${noun} barely moved (${signStr(ch)}).</strong> At the whole-server level this fix didn't change how much was in use — but per-site ${word} isn't reported by SiteGround, so a real site-level saving can be hidden inside a flat server total. Use the CPU-share line below as a proxy.`);
+            else
+                out.push(`🔴 <strong>Server-wide ${noun} rose ${ch.toFixed(0)}%</strong> over the window — the opposite of the intended effect.`);
+            const shareB = avgAll(cmp.aB) ? cmp.tAvgB / avgAll(cmp.aB) * 100 : null;
+            const shareA = avgAll(cmp.aA) ? cmp.tAvgA / avgAll(cmp.aA) * 100 : null;
+            const shareCh = pctCh(shareB, shareA);
+            if (shareCh !== null) {
+                if (ch !== null && ch <= -5 && shareCh < -5)
+                    out.push(`✅ Attribution: <strong>${site}'s share of server CPU dropped from ${fmtD(shareB, 1)}% to ${fmtD(shareA, 1)}%</strong> over the same window. The ${word} drop and ${site}'s shrinking footprint move together — a strong sign your fix is what freed the ${word}.`);
+                else if (ch !== null && ch <= -5)
+                    out.push(`⚠️ Attribution: ${noun} fell, but ${site}'s CPU share moved ${signStr(shareCh)} — the relief may have come partly from another site. Per-site ${word} isn't reported by SiteGround, so cross-check the All-Sites Ranking below to see which site actually got lighter.`);
+                else
+                    out.push(`ℹ️ ${site}'s share of server CPU went ${signStr(shareCh)} (${fmtD(shareB, 1)}% → ${fmtD(shareA, 1)}%). Per-site ${word} isn't reported by SiteGround, so attribution leans on this CPU-share proxy.`);
+            }
+            const fs = focusSeries(cmp, focus);
+            const st = fs && fs.b.length >= 2 && fs.a.length >= 2 ? welchT(fs.b, fs.a) : null;
+            const sl = sigLine(st, noun);
+            if (sl) out.push(sl);
+            return out;
+        }
+        // ── Per-site metrics: cost per execution, execution volume ──
+        if (!data.hasExec) {
+            out.push(`⚠️ Execution data isn't available for this account, so a ${esc(FOCUS_LABELS[focus] || focus)} verdict can't be produced. Switch Fix Focus to <em>Reduce CPU time</em> or <em>Show everything</em>.`);
+            return out;
+        }
+        const lens = focus === 'cost' ? cmp.lenses.perExec : cmp.lenses.exec;
+        const tgtCh = lens.tgtCh, netCh = refCh(lens);
+        const did = (tgtCh !== null && netCh !== null) ? tgtCh - netCh : null;
+        const noun = focus === 'cost' ? 'the CPU cost of each request' : 'request volume';
+        const fmtv = focus === 'cost' ? (v => fmtD(v, 3) + ' sec/req') : (v => fmtN(v) + ' req/day');
+        // Wording that keeps the baseIsNet case byte-identical to the original (regression anchor)
+        // while naming the selected peers when a curated group is the baseline.
+        const scope = baseIsNet ? 'the rest of the server' : 'your selected peers';
+        const trend = baseIsNet ? 'a server-wide trend' : 'shared with the comparison group';
+        const trackScope = baseIsNet ? 'the whole server' : 'your selected peers';
+        if (tgtCh === null)
+            out.push(`→ Not enough data to measure ${noun} on ${site}.`);
+        else {
+            const dir = tgtCh < 0 ? 'fell' : 'rose';
+            const goodDir = tgtCh < 0;
+            const ico = goodDir && tgtCh <= -10 ? '✅' : goodDir ? '⚠️' : '🔴';
+            out.push(`${ico} <strong>On ${site}, ${noun} ${dir} ${Math.abs(tgtCh).toFixed(0)}%</strong> (${fmtv(lens.tgtBefore)} → ${fmtv(lens.tgtAfter)}).${goodDir ? '' : ' That\'s the opposite of the intended direction — worth investigating.'}`);
+        }
+        if (did !== null) {
+            if (did <= -15)
+                out.push(`✅ <strong>This is isolated to ${site}.</strong> Across ${scope}, ${noun} ${netCh < 0 ? 'fell' : 'rose'} ${Math.abs(netCh).toFixed(0)}%, so ${site} beat ${baseName} by ${Math.abs(did).toFixed(0)} points — the improvement is something your fix did here, not ${trend}.`);
+            else if (did < -5)
+                out.push(`⚠️ <strong>Mostly isolated.</strong> ${baseIsNet ? "Peers'" : "Your selected peers'"} ${noun} moved ${signStr(netCh)} as well, so roughly ${Math.abs(did).toFixed(0)} points of the change is credited to your fix and the rest is ambient drift. Still a real, mostly-attributable gain.`);
+            else if (Math.abs(did) <= 5)
+                out.push(`→ <strong>The change tracks ${trackScope}.</strong> ${site} moved ${signStr(tgtCh)} and ${baseName} moved ${signStr(netCh)} — almost the same.${tgtCh < 0 ? ` ${site}'s ${noun} genuinely dropped, but so did ${baseIsNet ? 'everyone\'s' : 'your peers\''}, so we can't prove the fix (rather than a quiet period) is what caused it.` : ''} To isolate it, narrow the window to right around the deploy or pick a tighter peer group.`);
+            else
+                out.push(`🔴 <strong>${site} underperformed ${baseName}</strong> on ${noun} by ${did.toFixed(0)} points — ${baseIsNet ? 'the rest of the server' : 'your selected peers'} improved more than ${site} did.`);
+        }
+        const fs = focusSeries(cmp, focus);
+        const st = fs && fs.b.length >= 2 && fs.a.length >= 2 ? welchT(fs.b, fs.a) : null;
+        const sl = sigLine(st, focus === 'cost' ? 'cost per request' : 'executions');
+        if (sl) out.push(sl);
+        const getCh = focus === 'cost' ? (r => r.costCh) : (r => r.exCh);
+        const ranked = rankByMetric(cmp.perSiteRaw, getCh, target);
+        const idx = ranked.findIndex(r => r.isTarget);
+        if (idx >= 0 && ranked.length > 1) {
+            const r = idx + 1, n = ranked.length;
+            const pctl = (n - r) / (n - 1) * 100;
+            const ico = pctl >= 70 ? '✅' : pctl >= 40 ? '⚠️' : '🔴';
+            out.push(`${ico} Among ${n} comparable sites, <strong>${site} ranks #${r}</strong> for ${focus === 'cost' ? 'cost-per-request' : 'volume'} improvement (better than ${pctl.toFixed(0)}% of peers).`);
+        }
+        return out;
+    }
+    ;
+
+    const interpret = (cmp, target, focus = 'auto', data = S.data) => {
         const parts = [];
         const g = k => cmp.metrics.find(m => m.key === k);
         const tM = g('cpu_avg')
@@ -2199,6 +2413,14 @@
           , eM = g('ex_avg')
           , ceM = g('cpu_ex');
         const site = target.split('.')[0];
+        // The DiD verdict is graded against the SELECTED comparison group (baseline). When that
+        // group is the whole network the wording stays "network" (regression anchor preserved);
+        // otherwise the prose names the selected peers. bn/bnShort/restPhrase keep the baseIsNet
+        // branch byte-identical to the original strings.
+        const baseIsNet = !!cmp.ctrlIsNetwork;
+        const bn = baseIsNet ? 'the network' : 'your selected peers';
+        const bnShort = baseIsNet ? 'network' : 'selected peers';
+        const restPhrase = baseIsNet ? 'the rest of the account' : 'your selected peers';
         // Plan-change context: every metric is in absolute units (CPU sec, cores in use, GB),
         // so the comparison is plan-immune by construction. This is purely informational.
         if (cmp.planStraddles && cmp.planStraddles.length) {
@@ -2211,6 +2433,17 @@
             const ico = c.score >= 75 ? '✅' : c.score >= 50 ? '⚠️' : '🔴';
             const reasonsBit = c.reasons.length ? ` <em>Issues:</em> ${c.reasons.join('; ')}.` : '';
             parts.push(`${ico} <strong>Credibility: ${c.score}/100 (${c.verdict}).</strong>${reasonsBit}`);
+        }
+        // FOCUS MODE: when the user has chosen a specific metric to demonstrate (cost / execs /
+        // memory / cores / combo), the entire interpretation speaks ONLY to that metric. Running
+        // the CPU-time DiD here would contradict a cost report ("No isolated fix effect" refers to
+        // CPU, not cost) — so we return the focus narrative and stop. 'cpu' and 'auto' fall through
+        // to the original full CPU-centric interpretation below.
+        if (focus !== 'auto' && focus !== 'cpu') {
+            focusNarrative(cmp, focus, target, data).forEach(l => parts.push(l));
+            if (cmp.aDates.length < 3)
+                parts.push(`⚠️ Only <strong>${cmp.aDates.length} complete after-day${cmp.aDates.length === 1 ? '' : 's'}</strong>. 5–7 days are recommended before presenting results.`);
+            return parts;
         }
         // Three-lens narrative: did traffic drop, did total work drop, did per-request cost drop?
         // The combination is the verdict. Per-exec moving differently from peers is the cleanest
@@ -2246,33 +2479,40 @@
                 pattern = `Traffic ${execCh === null ? '—' : signStr(execCh)}, CPU ${cpuCh === null ? '—' : signStr(cpuCh)}, per-request cost ${perExCh === null ? '—' : signStr(perExCh)}. No dominant fix pattern.`;
                 ico = '→';
             }
-            // Per-exec vs network — is the target's per-request cost moving differently from peers?
+            // Per-exec vs baseline — is the target's per-request cost moving differently from the
+            // selected comparison group? (Whole network when that's the selected group.)
             let peerBit = '';
-            if (perExCh !== null && netPerEx !== null) {
-                const did = perExCh - netPerEx;
-                if (did <= -10) peerBit = ` <strong>Target's per-request cost beat network by ${Math.abs(did).toFixed(0)} pp</strong> — site-specific optimisation, not account-wide drift.`;
-                else if (did < -5) peerBit = ` Target's per-request cost ${signStr(perExCh)} vs network ${signStr(netPerEx)} — modest peer-relative improvement.`;
-                else if (Math.abs(did) <= 5) peerBit = ` Target's per-request cost moved with the network (target ${signStr(perExCh)} vs network ${signStr(netPerEx)}) — likely shared infrastructure or ambient drift, not a site-specific fix.`;
-                else if (did > 5) peerBit = ` <strong>Target's per-request cost rose ${did.toFixed(0)} pp more than network</strong> — site-specific regression.`;
+            const netPerExB = baseIsNet ? netPerEx : cmp.lenses.perExec.ctrlCh;
+            if (perExCh !== null && netPerExB !== null) {
+                const did = perExCh - netPerExB;
+                if (did <= -10) peerBit = ` <strong>Target's per-request cost beat ${bnShort} by ${Math.abs(did).toFixed(0)} pp</strong> — site-specific optimisation, not account-wide drift.`;
+                else if (did < -5) peerBit = ` Target's per-request cost ${signStr(perExCh)} vs ${bnShort} ${signStr(netPerExB)} — modest peer-relative improvement.`;
+                else if (Math.abs(did) <= 5) peerBit = ` Target's per-request cost moved with ${bn} (target ${signStr(perExCh)} vs ${bnShort} ${signStr(netPerExB)}) — likely shared infrastructure or ambient drift, not a site-specific fix.`;
+                else if (did > 5) peerBit = ` <strong>Target's per-request cost rose ${did.toFixed(0)} pp more than ${bnShort}</strong> — site-specific regression.`;
             }
             parts.push(`${ico} ${pattern}${peerBit}`);
         }
-        // Lead with the difference-in-differences result — it's the single most credible "did the fix do anything?" answer.
-        if (cmp.netEffectPct !== null && cmp.targetPctCh !== null && cmp.networkPctCh !== null) {
+        // Lead with the difference-in-differences result — it's the single most credible "did the
+        // fix do anything?" answer. Graded against the selected baseline (= network when chosen).
+        if (cmp.netEffectPct !== null && cmp.targetPctCh !== null && cmp.baselinePctCh !== null) {
             const ne = cmp.netEffectPct;
             const tc = cmp.targetPctCh;
-            const nc = cmp.networkPctCh;
+            const nc = cmp.baselinePctCh;
             const saved = cmp.savedCpuPerDay;
             const expected = cmp.expectedAfter;
-            const counter = (saved !== null && expected !== null) ? ` If the target had drifted with the network it would now sit at ~<strong>${fmtN(expected)}</strong> CPU sec/day; it actually sits at <strong>${fmtN(cmp.tAvgA)}</strong> — a net ${saved >= 0 ? 'saving' : 'loss'} of <strong>${fmtN(Math.abs(saved))}</strong> CPU sec/day vs the counterfactual.` : '';
+            const counter = (saved !== null && expected !== null) ? ` If the target had drifted with ${bn} it would now sit at ~<strong>${fmtN(expected)}</strong> CPU sec/day; it actually sits at <strong>${fmtN(cmp.tAvgA)}</strong> — a net ${saved >= 0 ? 'saving' : 'loss'} of <strong>${fmtN(Math.abs(saved))}</strong> CPU sec/day vs the counterfactual.` : '';
             if (ne <= -15)
-                parts.push(`✅ <strong>Fix beat the network by ${Math.abs(ne).toFixed(0)} percentage points.</strong> Target ${tc < 0 ? 'fell' : 'rose'} ${Math.abs(tc).toFixed(0)}% while the rest of the account ${nc < 0 ? 'fell' : 'rose'} ${Math.abs(nc).toFixed(0)}%.${counter}`);
+                parts.push(`✅ <strong>Fix beat ${bn} by ${Math.abs(ne).toFixed(0)} percentage points.</strong> Target ${tc < 0 ? 'fell' : 'rose'} ${Math.abs(tc).toFixed(0)}% while ${restPhrase} ${nc < 0 ? 'fell' : 'rose'} ${Math.abs(nc).toFixed(0)}%.${counter}`);
             else if (ne < -5)
-                parts.push(`⚠️ <strong>Modest isolated effect (${ne.toFixed(0)} pp net).</strong> Target ${tc < 0 ? 'fell' : 'rose'} ${Math.abs(tc).toFixed(0)}% vs network ${nc < 0 ? 'down' : 'up'} ${Math.abs(nc).toFixed(0)}%. Most of the apparent improvement is real, but a meaningful share could be ambient.${counter}`);
+                parts.push(`⚠️ <strong>Modest isolated effect (${ne.toFixed(0)} pp net).</strong> Target ${tc < 0 ? 'fell' : 'rose'} ${Math.abs(tc).toFixed(0)}% vs ${bnShort} ${nc < 0 ? 'down' : 'up'} ${Math.abs(nc).toFixed(0)}%. Most of the apparent improvement is real, but a meaningful share could be ambient.${counter}`);
             else if (Math.abs(ne) <= 5)
-                parts.push(`🔴 <strong>No isolated fix effect.</strong> Target moved with the network (target ${signStr(tc)} vs network ${signStr(nc)}; net effect ${signStr(ne)}). Whatever happened, it happened to <em>everyone</em> — the fix can't be credited with the change.${counter}`);
+                parts.push(`🔴 <strong>No isolated fix effect.</strong> Target moved with ${bn} (target ${signStr(tc)} vs ${bnShort} ${signStr(nc)}; net effect ${signStr(ne)}). ${baseIsNet ? 'Whatever happened, it happened to <em>everyone</em>' : 'The same shift hit your selected peers'} — the fix can't be credited with the change.${counter}`);
             else
-                parts.push(`🔴 <strong>Target underperformed the network by ${ne.toFixed(0)} pp.</strong> Network ${nc < 0 ? 'fell' : 'rose'} ${Math.abs(nc).toFixed(0)}% but target ${tc < 0 ? 'only fell' : 'rose'} ${Math.abs(tc).toFixed(0)}%. The fix may have made things worse relative to peers.${counter}`);
+                parts.push(`🔴 <strong>Target underperformed ${bn} by ${ne.toFixed(0)} pp.</strong> ${baseIsNet ? 'Network' : 'Your selected peers'} ${nc < 0 ? 'fell' : 'rose'} ${Math.abs(nc).toFixed(0)}% but target ${tc < 0 ? 'only fell' : 'rose'} ${Math.abs(tc).toFixed(0)}%. The fix may have made things worse relative to peers.${counter}`);
+            // When a curated subset is the baseline, surface the whole-network cross-check so the
+            // broad picture isn't lost. (Skipped when the baseline already IS the network.)
+            if (!baseIsNet && cmp.netEffectPctVsNetwork !== null)
+                parts.push(`ℹ️ Context — against the <strong>whole network</strong> (${cmp.networkDoms.length} sites) the net effect is <strong>${cmp.netEffectPctVsNetwork > 0 ? '+' : ''}${cmp.netEffectPctVsNetwork.toFixed(1)} pp</strong> (network ${signStr(cmp.networkPctCh)}). Your selected baseline drives the headline above; this is the broad cross-check.`);
         }
         // Weekday-paired DiD — same idea as the raw DiD above, but only counts days that
         // matched weekday-for-weekday between before and after. More honest if the windows
@@ -2283,13 +2523,13 @@
             const diff = ne - raw;
             const note = Math.abs(diff) > 5 ? ` — meaningfully different from the raw DiD (${signStr(raw)}); the calendar mix of your windows is driving part of the apparent effect.` : '';
             const ico = ne <= -15 ? '✅' : ne < -5 ? '⚠️' : '🔴';
-            parts.push(`${ico} Weekday-paired net effect: <strong>${signStr(ne)} pp</strong> (target ${signStr(cmp.targetPctChPaired)} vs network ${signStr(cmp.networkPctChPaired)}, ${cmp.tBPaired.length} matched day-pairs covering ${cmp.dowsCovered.length} weekdays).${note}`);
+            parts.push(`${ico} Weekday-paired net effect: <strong>${signStr(ne)} pp</strong> (target ${signStr(cmp.targetPctChPaired)} vs ${bnShort} ${signStr(cmp.baselinePctChPaired)}, ${cmp.tBPaired.length} matched day-pairs covering ${cmp.dowsCovered.length} weekdays).${note}`);
         }
-        // DiD residual t-test — does the deviation from network drift differ from zero?
+        // DiD residual t-test — does the deviation from the baseline's drift differ from zero?
         if (cmp.statResid?.p !== undefined) {
             const p = cmp.statResid.p;
             const sig = p < 0.01 ? '✅ <strong>statistically significant</strong>' : p < 0.05 ? '✅ statistically significant' : p < 0.1 ? '⚠️ marginally significant' : '🔴 <strong>not statistically significant</strong>';
-            parts.push(`${sig} DiD residual t-test (Welch's, p=${p < 0.001 ? '<0.001' : p.toFixed(3)}, df=${cmp.statResid.df.toFixed(1)}). This is the proper isolated-fix test: it asks whether the target's per-day deviation from network drift differs from zero.`);
+            parts.push(`${sig} DiD residual t-test (Welch's, p=${p < 0.001 ? '<0.001' : p.toFixed(3)}, df=${cmp.statResid.df.toFixed(1)}). This is the proper isolated-fix test: it asks whether the target's per-day deviation from ${bnShort} drift differs from zero.`);
         }
         // Rank context — answers "is my target unusual?"
         if (cmp.targetRank > 0 && cmp.perSite.length > 1) {
@@ -2695,6 +2935,8 @@ tr.incomplete td{opacity:.45}
 .lens-strip-sub{font-size:11px;font-weight:400;color:var(--text-muted);line-height:1.5;flex:1;min-width:280px}
 .lens-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
 .lens-card{background:var(--bg-card-alt);border:1px solid var(--border-faint);border-radius:var(--radius-sm);padding:14px 16px}
+.lens-card.lens-primary{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent-border),var(--shadow-card);background:var(--accent-bg)}
+.lens-primary-badge{margin-left:auto;background:var(--accent);color:#fff;font-size:8.5px;font-weight:700;padding:2px 7px;border-radius:var(--radius-pill);text-transform:uppercase;letter-spacing:.04em}
 .lens-card-h{font-size:11px;font-weight:700;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;display:flex;align-items:center;gap:5px}
 .lens-card-unit{color:var(--text-ghost);font-weight:500;text-transform:none;letter-spacing:0}
 .lens-card-hero{font-size:30px;font-weight:800;line-height:1;letter-spacing:-.02em;margin-bottom:4px}
@@ -2948,7 +3190,7 @@ svg.spark{display:inline-block;vertical-align:middle}
         <div class="sgd-hdr-sub" id="sgd-acct">Loading…</div>
         <div class="avail-bar" id="sgd-avail"></div>
         <div class="sgd-hdr-acts">
-          <button class="excl-chip ${S.ui.excludedSites.size ? 'has' : ''}" id="sgd-excl-chip" data-tip="${esc('<strong>Site exclusions</strong> — sites currently being filtered out of every per-site calculation. Click a site\'s row in the Sites tab to add/remove. Server-wide metrics (cores in use, GB used, live barometers) are unaffected — SiteGround\'s API does not report those per-site.')}">🚫 <span id="sgd-excl-count">${S.ui.excludedSites.size}</span> excluded</button>
+          <button class="excl-chip ${S.ui.excludedSites.size ? 'has' : ''}" id="sgd-excl-chip" data-tip="${esc('<strong>Manage site exclusions</strong> — click to open the include/exclude panel and toggle any site in or out of every per-site calculation (control group, network, ranking, DiD). Server-wide metrics (cores in use, GB used, live barometers) are unaffected — SiteGround\'s API does not report those per-site.')}">🚫 <span id="sgd-excl-count">${S.ui.excludedSites.size}</span> excluded</button>
           <button class="theme-toggle ${S.ui.explain ? 'on' : ''}" id="sgd-explain-toggle" data-tip="${esc('<strong>Explain mode</strong> — when on, every section gets a plain-English subtitle. Tooltips still work on hover for the technical detail.')}" title="Toggle plain-English explanations">📖</button>
           <button class="theme-toggle" id="sgd-theme-toggle" title="Toggle light/dark mode">${S.ui.theme === 'light' ? '🌙' : '☀️'}</button>
           <button class="btn sm" data-a="gen-report-current" data-tip="${esc('Open a Cobblestone-branded, print-ready document for the current tab. Health → Server Health Snapshot; Sites → Sites Overview; Before/After → DiD Analysis. Use your browser\'s "Save as PDF" from the print dialog.')}" style="background:var(--accent);color:#fff;border-color:var(--accent)">📄 Report</button>
@@ -3135,11 +3377,18 @@ svg.spark{display:inline-block;vertical-align:middle}
             hide();
         }
         );
-        // Click on a trigger pins the tooltip; click anywhere else hides it.
-        // Critical for touch / keyboard accessibility and as a fallback if hover misbehaves.
+        // Click-to-pin — but ONLY for the dedicated help icons (.ticon) and table headers,
+        // which are purely informational. Action buttons, the explain/theme toggles, the
+        // exclude chip, tabs, cards, etc. ALSO carry data-tip; pinning those (and the
+        // e.stopPropagation it required) used to swallow the click in this capture-phase
+        // listener so the button's real action — handled in the bubble-phase handler — never
+        // fired. Restricting the pin to .ticon/<th> lets every actionable control work while
+        // still giving the help icons their click-to-pin behaviour. Hover still shows the
+        // tooltip for everything with data-tip (see the mouseover handler above).
         root.addEventListener('click', e => {
             const el = e.target.closest('[data-tip]');
-            if (el && el.dataset.tip) {
+            const pinnable = el && el.dataset.tip && (el.classList.contains('ticon') || el.tagName === 'TH');
+            if (pinnable) {
                 if (S.ui.ttCurrent === el && S.ui.ttPinned) {
                     hide();
                 } else {
@@ -3150,7 +3399,8 @@ svg.spark{display:inline-block;vertical-align:middle}
                 e.stopPropagation();
                 return;
             }
-            // Click outside any data-tip element while pinned → hide.
+            // Any other click (including on action buttons that happen to carry a tooltip):
+            // dismiss a pinned tooltip but DO NOT stop propagation — the action must run.
             if (S.ui.ttPinned)
                 hide();
         }
@@ -4619,9 +4869,7 @@ svg.spark{display:inline-block;vertical-align:middle}
       <div class="fld" id="fld-after-d" ${!usingCustom ? 'style="display:none"' : ''}><label>After End</label><input type="date" id="cmp-aend" value="${esc(cAftEnd)}"></div>
       <div class="fld"><label>Fix Focus ${tipIcon('fix_focus')}</label><select id="cmp-focus">${fOpts}</select></div>
       <div class="fld"><label>Compare Against ${tipIcon('control_group')}</label><select id="cmp-ctrl">${cOpts}</select></div>
-      <button class="btn sec" data-a="manage-sites" data-tip="${esc('<strong>Include / exclude sites</strong> from every per-site calculation: control group, network, ranking, and DiD. Server-wide metrics (cores, GB used, live barometers) are unaffected — SiteGround\'s API only reports those account-wide.')}">🚫 Manage Sites <span style="opacity:.7;font-size:10px;margin-left:3px">(${S.ui.excludedSites.size})</span></button>
       <button class="btn" data-a="run-cmp">Run Analysis</button>
-      <button class="btn sec" data-a="gen-report" data-tip="${esc('Open a Cobblestone-branded, print-ready PDF version of this analysis in a new tab. Save-as-PDF from your browser\'s print dialog.')}">📄 Generate Branded Report</button>
     </div>
     <div class="ctrl-row" style="gap:18px;margin-bottom:14px;padding:10px 14px;border:1px dashed var(--border);border-radius:var(--radius-sm);background:var(--bg-card-alt)">
       <span style="font-size:10.5px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em">Advanced filters</span>
@@ -4949,8 +5197,16 @@ svg.spark{display:inline-block;vertical-align:middle}
         const site = target.split('.')[0];
         const ctrlSize = ctrlDoms.length;
         const netSize = cmp.networkDoms.length;
-        const ctrlLbl = `${esc(ctrlLabel)} (${ctrlSize} site${ctrlSize === 1 ? '' : 's'})`;
-        const netLbl = `Whole network (${netSize} site${netSize === 1 ? '' : 's'})`;
+        // The verdict is graded against the SELECTED group (baseline). Whole-network is context.
+        // When the selected group IS the whole network, the two coincide and we say "the network".
+        const baseIsNet = !!cmp.ctrlIsNetwork;
+        const baseName = baseIsNet ? 'the network' : 'your selected peers';
+        const baseUnit = baseIsNet ? 'vs network' : 'vs selected peers';
+        const baseBadge = ' <span style="background:var(--accent);color:#fff;font-size:8px;font-weight:700;padding:1px 6px;border-radius:8px;text-transform:uppercase;letter-spacing:.04em;vertical-align:middle">baseline</span>';
+        const ctxBadge = ' <span style="color:var(--text-ghost);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">context</span>';
+        const refCh = L => baseIsNet ? L.netCh : L.ctrlCh;
+        const ctrlLbl = `${esc(ctrlLabel)} (${ctrlSize} site${ctrlSize === 1 ? '' : 's'})${baseIsNet ? '' : baseBadge}`;
+        const netLbl = `Whole network (${netSize} site${netSize === 1 ? '' : 's'})${baseIsNet ? baseBadge : ctxBadge}`;
         const tgtLbl = `Target — ${esc(site)}`;
         // Common row builder: label + "before → after" pair + change %, with colour class.
         const row = (label, before, after, ch, fmtFn, unit) => {
@@ -5007,12 +5263,12 @@ svg.spark{display:inline-block;vertical-align:middle}
             if (!data.hasExec)
                 return `<div class="focus-hero noop"><strong>Fix Focus: Cost per execution</strong> — execution data isn't available for this account, so per-request cost can't be measured. Switch Fix Focus back to <em>Show everything</em> or pick a different metric.</div>`;
             const L = cmp.lenses.perExec;
-            const v = verdict(L.tgtCh, L.netCh, 'network', 'per-request cost');
+            const v = verdict(L.tgtCh, refCh(L), baseName, 'per-request cost');
             const ranked = rankByMetric(cmp.perSiteRaw, r => r.costCh, target);
             return `<div class="focus-hero" data-focus="cost">
         <div class="fh-head">
           <div class="fh-h-l"><span class="fh-eyebrow">FIX FOCUS — cost per execution</span><h3 class="fh-title">Did each request get cheaper?</h3></div>
-          <div class="fh-hero-num ${v.cls}">${v.heroLbl}<span class="fh-hero-unit">vs network</span></div>
+          <div class="fh-hero-num ${v.cls}">${v.heroLbl}<span class="fh-hero-unit">${baseUnit}</span></div>
         </div>
         <div class="fh-body">
           ${row(tgtLbl, L.tgtBefore, L.tgtAfter, L.tgtCh, v => fmtD(v, 3), 'sec/req')}
@@ -5027,12 +5283,12 @@ svg.spark{display:inline-block;vertical-align:middle}
             if (!data.hasExec)
                 return `<div class="focus-hero noop"><strong>Fix Focus: Execution volume</strong> — execution data isn't available for this account. Switch to a different focus or back to <em>Show everything</em>.</div>`;
             const L = cmp.lenses.exec;
-            const v = verdict(L.tgtCh, L.netCh, 'network', 'request volume');
+            const v = verdict(L.tgtCh, refCh(L), baseName, 'request volume');
             const ranked = rankByMetric(cmp.perSiteRaw, r => r.exCh, target);
             return `<div class="focus-hero" data-focus="execs">
         <div class="fh-head">
           <div class="fh-h-l"><span class="fh-eyebrow">FIX FOCUS — execution volume</span><h3 class="fh-title">Did request volume actually drop?</h3></div>
-          <div class="fh-hero-num ${v.cls}">${v.heroLbl}<span class="fh-hero-unit">vs network</span></div>
+          <div class="fh-hero-num ${v.cls}">${v.heroLbl}<span class="fh-hero-unit">${baseUnit}</span></div>
         </div>
         <div class="fh-body">
           ${row(tgtLbl, L.tgtBefore, L.tgtAfter, L.tgtCh, fmtN, 'requests/day')}
@@ -5045,13 +5301,13 @@ svg.spark{display:inline-block;vertical-align:middle}
         }
         if (focus === 'cpu') {
             const L = cmp.lenses.cpu;
-            const v = verdict(L.tgtCh, L.netCh, 'network', 'CPU consumption');
+            const v = verdict(L.tgtCh, refCh(L), baseName, 'CPU consumption');
             const ranked = rankByMetric(cmp.perSiteRaw, r => r.pctCh, target);
-            const counterBit = (cmp.savedCpuPerDay !== null && cmp.expectedAfter !== null) ? `<div class="fh-counter">Counterfactual: had the target drifted with the network, after-CPU would sit at <strong>${fmtN(cmp.expectedAfter)}</strong>; actual is <strong>${fmtN(cmp.tAvgA)}</strong> — a net <strong class="${cmp.savedCpuPerDay >= 0 ? 'cg' : 'cr'}">${cmp.savedCpuPerDay >= 0 ? 'saving' : 'loss'} of ${fmtN(Math.abs(cmp.savedCpuPerDay))}</strong> CPU sec/day.</div>` : '';
+            const counterBit = (cmp.savedCpuPerDay !== null && cmp.expectedAfter !== null) ? `<div class="fh-counter">Counterfactual: had the target drifted with ${baseName}, after-CPU would sit at <strong>${fmtN(cmp.expectedAfter)}</strong>; actual is <strong>${fmtN(cmp.tAvgA)}</strong> — a net <strong class="${cmp.savedCpuPerDay >= 0 ? 'cg' : 'cr'}">${cmp.savedCpuPerDay >= 0 ? 'saving' : 'loss'} of ${fmtN(Math.abs(cmp.savedCpuPerDay))}</strong> CPU sec/day.</div>` : '';
             return `<div class="focus-hero" data-focus="cpu">
         <div class="fh-head">
           <div class="fh-h-l"><span class="fh-eyebrow">FIX FOCUS — CPU seconds</span><h3 class="fh-title">Did total CPU time actually fall?</h3></div>
-          <div class="fh-hero-num ${v.cls}">${v.heroLbl}<span class="fh-hero-unit">vs network</span></div>
+          <div class="fh-hero-num ${v.cls}">${v.heroLbl}<span class="fh-hero-unit">${baseUnit}</span></div>
         </div>
         <div class="fh-body">
           ${row(tgtLbl, L.tgtBefore, L.tgtAfter, L.tgtCh, fmtN, 'CPU sec/day')}
@@ -5238,7 +5494,7 @@ svg.spark{display:inline-block;vertical-align:middle}
             S.ui.frozenCtrl = null;
         }
         const cmp = buildCmp(data, target, fixDate, daysBefore, daysAfter, ctrlDoms, buildOpts);
-        const interp = interpret(cmp, target);
+        const interp = interpret(cmp, target, fixFocus, data);
         const h = buildHourlyData();
         const tSite = data.siteStats.find(s => s.domain === target);
         const curHrCpu = h ? lastCompleteHourly(h.sites.find(x => x.domain === target)?.points) : null;
@@ -5277,27 +5533,46 @@ svg.spark{display:inline-block;vertical-align:middle}
     </div>
   </div>`;
 
-        const cards = cmp.metrics.map(m => {
+        // Lead the metric cards with the keys that match the active Fix Focus, so the card the
+        // reader scans first is the one the report is about. Remaining cards keep their order.
+        const focusCardKeys = ({
+            cost: ['cpu_ex'], execs: ['ex_avg'], cpu: ['cpu_avg', 'cpu_tot'],
+            memory: ['mem_avg', 'mem_peak'], cores: ['core'],
+            combo: ['cpu_ex', 'ex_avg', 'cpu_avg', 'mem_avg', 'core']
+        })[fixFocus] || [];
+        const orderedMetrics = focusCardKeys.length
+            ? [...focusCardKeys.map(k => cmp.metrics.find(m => m.key === k)).filter(Boolean),
+               ...cmp.metrics.filter(m => !focusCardKeys.includes(m.key))]
+            : cmp.metrics;
+        const cards = orderedMetrics.map(m => {
             const ch = pctCh(m.before, m.after);
             const cls = m.neutral ? 'cn' : clsCh(ch);
-            return `<div class="cmp-card" ${tipAttr(m.tip)}><div class="cmp-t">${tipIcon(m.tip)} ${esc(m.title)}</div><div class="cmp-v ${cls}">${signStr(ch)}</div><div class="cmp-d">${m.fmt(m.before)} → ${m.fmt(m.after)} ${m.unit}</div><div class="cmp-desc">${esc(m.desc)}</div></div>`;
+            const lead = focusCardKeys.includes(m.key) ? ' style="border-top:var(--accent-bar)"' : '';
+            return `<div class="cmp-card"${lead} ${tipAttr(m.tip)}><div class="cmp-t">${tipIcon(m.tip)} ${esc(m.title)}</div><div class="cmp-v ${cls}">${signStr(ch)}</div><div class="cmp-d">${m.fmt(m.before)} → ${m.fmt(m.after)} ${m.unit}</div><div class="cmp-desc">${esc(m.desc)}</div></div>`;
         }
         );
 
         // ── Net Effect hero card (Difference-in-Differences) ─────────────────
+        // Graded against the SELECTED comparison group (baseline). Whole-network shown as a
+        // context line in the footer when the selected group is a curated subset.
         const neHtml = ( () => {
+            const baseIsNet = !!cmp.ctrlIsNetwork;
+            const baseTitle = baseIsNet ? 'Network' : esc(ctrlLabel);
             const ne = cmp.netEffectPct;
             const tc = cmp.targetPctCh;
-            const nc = cmp.networkPctCh;
+            const nc = cmp.baselinePctCh;
             const saved = cmp.savedCpuPerDay;
             const expected = cmp.expectedAfter;
             const heroCls = ne === null ? 'cn' : ne <= -10 ? 'cg' : ne >= 10 ? 'cr' : Math.abs(ne) > 3 ? 'cw2' : 'cn';
             const heroLbl = ne === null ? '—' : `${ne > 0 ? '+' : ''}${ne.toFixed(1)} pp`;
-            const verdict = ne === null ? 'Insufficient data' : ne <= -15 ? '✅ Strong isolated fix effect' : ne < -5 ? '⚠️ Modest isolated effect' : Math.abs(ne) <= 5 ? '🔴 Target moved with the network — no isolated effect' : ne > 5 ? '🔴 Target underperformed network' : '';
+            const peerWord = baseIsNet ? 'the network' : 'your selected peers';
+            const verdict = ne === null ? 'Insufficient data' : ne <= -15 ? '✅ Strong isolated fix effect' : ne < -5 ? '⚠️ Modest isolated effect' : Math.abs(ne) <= 5 ? `🔴 Target moved with ${peerWord} — no isolated effect` : ne > 5 ? `🔴 Target underperformed ${peerWord}` : '';
             const rankBit = (cmp.targetPercentile !== null && cmp.targetRank > 0) ? `Site rank <strong>#${cmp.targetRank}/${cmp.perSite.length}</strong> (improved more than ${cmp.targetPercentile.toFixed(0)}% of sites). ` : '';
-            const counterBit = (saved !== null && expected !== null) ? `Counterfactual: had the target drifted with the network, after-CPU would sit at <strong>${fmtN(expected)}</strong>; actual is <strong>${fmtN(cmp.tAvgA)}</strong> — a net <strong class="${saved >= 0 ? 'cg' : 'cr'}">${saved >= 0 ? 'saving' : 'loss'} of ${fmtN(Math.abs(saved))}</strong> CPU sec/day vs that counterfactual.` : '';
+            const counterBit = (saved !== null && expected !== null) ? `Counterfactual: had the target drifted with ${peerWord}, after-CPU would sit at <strong>${fmtN(expected)}</strong>; actual is <strong>${fmtN(cmp.tAvgA)}</strong> — a net <strong class="${saved >= 0 ? 'cg' : 'cr'}">${saved >= 0 ? 'saving' : 'loss'} of ${fmtN(Math.abs(saved))}</strong> CPU sec/day vs that counterfactual.` : '';
+            // Whole-network context line — only meaningful when the baseline is a curated subset.
+            const netCtxBit = !baseIsNet ? `<br>Whole-network context (${cmp.networkDoms.length} sites): <strong>${fmtN(cmp.nAvgB)} → ${fmtN(cmp.nAvgA)}</strong> (<span class="${clsCh(cmp.networkPctCh)}">${signStr(cmp.networkPctCh)}</span>); net effect vs network <strong>${cmp.netEffectPctVsNetwork === null ? '—' : (cmp.netEffectPctVsNetwork > 0 ? '+' : '') + cmp.netEffectPctVsNetwork.toFixed(1) + ' pp'}</strong>.` : '';
             return `<div class="net-hero">
-      <div class="nh-row"><div class="nh-lbl">${tipIcon('net_effect')} Net Effect (vs Network)</div>
+      <div class="nh-row"><div class="nh-lbl">${tipIcon('net_effect')} Net Effect (vs ${baseIsNet ? 'Network' : 'Selected Peers'})</div>
         <div class="nh-big ${heroCls}">${heroLbl}</div>
         <div class="nh-sub">${verdict}</div>
         ${laymanSub('net_effect')}
@@ -5306,11 +5581,11 @@ svg.spark{display:inline-block;vertical-align:middle}
         <div class="nh-pair"><span class="nh-num">${fmtN(cmp.tAvgB)} → ${fmtN(cmp.tAvgA)}</span></div>
         <div class="nh-mini"><span class="${clsCh(tc)}">${signStr(tc)}</span> · avg CPU sec/day</div>
       </div>
-      <div class="nh-row"><div class="nh-lbl">${tipIcon('network_change')} Network Change <span style="color:var(--text-ghost);font-weight:600">(${cmp.networkDoms.length} other sites)</span></div>
-        <div class="nh-pair"><span class="nh-num">${fmtN(cmp.nAvgB)} → ${fmtN(cmp.nAvgA)}</span></div>
+      <div class="nh-row"><div class="nh-lbl">${tipIcon('network_change')} ${baseTitle} Change <span style="color:var(--text-ghost);font-weight:600">(${cmp.ctrlDoms.length} site${cmp.ctrlDoms.length === 1 ? '' : 's'})${baseIsNet ? '' : ' · baseline'}</span></div>
+        <div class="nh-pair"><span class="nh-num">${fmtN(cmp.cAvgB)} → ${fmtN(cmp.cAvgA)}</span></div>
         <div class="nh-mini"><span class="${clsCh(nc)}">${signStr(nc)}</span> · combined CPU sec/day</div>
       </div>
-      <div class="nh-foot">${rankBit}${counterBit}</div>
+      <div class="nh-foot">${rankBit}${counterBit}${netCtxBit}</div>
     </div>`;
         }
         )();
@@ -5349,48 +5624,57 @@ svg.spark{display:inline-block;vertical-align:middle}
       <div class="paired-grid">
         <div><div class="paired-lbl">Net effect (paired)</div><div class="paired-val ${cls}">${signStr(ne)} pp</div></div>
         <div><div class="paired-lbl">Target (paired)</div><div class="paired-val ${clsCh(cmp.targetPctChPaired)}">${signStr(cmp.targetPctChPaired)}</div><div class="paired-sub">${fmtN(cmp.tBPAvg)} → ${fmtN(cmp.tAPAvg)}</div></div>
-        <div><div class="paired-lbl">Network (paired)</div><div class="paired-val ${clsCh(cmp.networkPctChPaired)}">${signStr(cmp.networkPctChPaired)}</div><div class="paired-sub">${fmtN(cmp.nBPAvg)} → ${fmtN(cmp.nAPAvg)}</div></div>
+        <div><div class="paired-lbl">${cmp.ctrlIsNetwork ? 'Network' : 'Selected peers'} (paired)</div><div class="paired-val ${clsCh(cmp.baselinePctChPaired)}">${signStr(cmp.baselinePctChPaired)}</div><div class="paired-sub">${fmtN(cmp.cBPAvg)} → ${fmtN(cmp.cAPAvg)}</div></div>
       </div>
       ${resBit ? `<div class="paired-foot">${resBit} ${tipIcon('did_residual')}</div>` : ''}
     </div>`;
         }
         )();
         // ── All-Sites Ranking — every active site's before→after change ─────
+        // Ranked in the active Fix Focus metric (cost/execs re-express; memory/cores fall back to CPU).
+        const rk = focusRanking(cmp, fixFocus);
         const rankHtml = ( () => {
-            if (!cmp.sortedByChange.length)
+            if (!rk.rows.length)
                 return '';
-            const maxAbs = Math.max(...cmp.sortedByChange.map(r => Math.abs(r.pctCh)), 1);
-            const rows = cmp.sortedByChange.map( (r, i) => {
+            const isCost = rk.focusKey === 'cost';
+            const maxAbs = Math.max(...rk.rows.map(r => Math.abs(r.rankCh)), 1);
+            const rows = rk.rows.map( (r, i) => {
                 const cls = r.isTarget ? 'target' : '';
-                const chCls = r.pctCh < 0 ? 'cg' : r.pctCh > 0 ? 'cr' : 'cn';
-                const barCls = r.pctCh < 0 ? '' : 'up';
-                const barW = Math.max(1, (Math.abs(r.pctCh) / maxAbs) * 120);
+                const chCls = r.rankCh < 0 ? 'cg' : r.rankCh > 0 ? 'cr' : 'cn';
+                const barCls = r.rankCh < 0 ? '' : 'up';
+                const barW = Math.max(1, (Math.abs(r.rankCh) / maxAbs) * 120);
                 const short = r.domain.length > 36 ? r.domain.slice(0, 33) + '…' : r.domain;
                 const actBadge = `<span class="act-badge act-${r.activityClass}">${r.activityClass.toLowerCase()}</span>`;
-                const costBit = r.costCh !== null ? `<span class="${clsCh(r.costCh)}" title="CPU per execution change">${signStr(r.costCh)}</span>` : '<span class="cd">—</span>';
-                return `<tr class="${cls}"><td>#${i + 1}</td><td title="${esc(r.domain)}">${esc(short)}${r.isTarget ? ' <span class="av-b on" style="font-size:9px;padding:1px 6px">target</span>' : ''}</td><td>${actBadge}</td><td class="r">${fmtN(r.bAvg)}</td><td class="r">${fmtN(r.aAvg)}</td><td class="r ${chCls}">${signStr(r.pctCh)}<span class="rank-bar ${barCls}" style="width:${barW}px"></span></td><td class="r ${r.absCh < 0 ? 'cg' : r.absCh > 0 ? 'cr' : 'cn'}">${r.absCh >= 0 ? '+' : ''}${fmtN(r.absCh)}</td><td class="r">${costBit}</td></tr>`;
+                // Secondary "per-request cost Δ" column — redundant when the focus already IS cost.
+                const costBit = isCost ? '' : (r.costCh !== null ? `<td class="r"><span class="${clsCh(r.costCh)}" title="CPU per execution change">${signStr(r.costCh)}</span></td>` : '<td class="r"><span class="cd">—</span></td>');
+                return `<tr class="${cls}"><td>#${i + 1}</td><td title="${esc(r.domain)}">${esc(short)}${r.isTarget ? ' <span class="av-b on" style="font-size:9px;padding:1px 6px">target</span>' : ''}</td><td>${actBadge}</td><td class="r">${rk.fmt(r.bVal)}</td><td class="r">${rk.fmt(r.aVal)}</td><td class="r ${chCls}">${signStr(r.rankCh)}<span class="rank-bar ${barCls}" style="width:${barW}px"></span></td><td class="r ${r.rankAbs < 0 ? 'cg' : r.rankAbs > 0 ? 'cr' : 'cn'}">${r.rankAbs >= 0 ? '+' : ''}${rk.fmt(r.rankAbs)}</td>${costBit}</tr>`;
             }
             ).join('');
-            const med = cmp.sortedByChange[Math.floor(cmp.sortedByChange.length / 2)];
+            const med = rk.rows[Math.floor(rk.rows.length / 2)];
+            // Focus metric's target/network change for the footer (CPU for cpu/auto + the
+            // memory/cores fallback; the matching lens otherwise).
+            const fLens = cmp.lenses[rk.focusKey === 'cost' ? 'perExec' : rk.focusKey === 'execs' ? 'exec' : 'cpu'];
             // Surface NEW / DIED / DEAD sites separately — they're excluded from the ranking but worth knowing about.
             const newDied = cmp.perSiteRaw.filter(r => ['NEW', 'DIED'].includes(r.activityClass));
             const newDiedHtml = newDied.length ? `<div style="font-size:11px;color:var(--text-faint);margin-top:6px;line-height:1.6"><strong>Excluded from ranking</strong> (no comparable baseline): ${newDied.map(r => `<span class="act-badge act-${r.activityClass}">${r.activityClass.toLowerCase()}</span> ${esc(r.domain)}`).join(' · ')}</div>` : '';
             const deadCount = data.deadSites?.length || 0;
             const deadHtml = deadCount > 0 ? `<div style="font-size:11px;color:var(--text-faint);margin-top:4px"><span class="act-badge act-INACTIVE">${deadCount} dead/parked</span> ${tipIcon('dead_site')} sites omitted: ${data.deadSites.slice(0, 6).map(d => esc(d)).join(', ')}${deadCount > 6 ? `, +${deadCount - 6} more` : ''}</div>` : '';
-            return `<div class="sec"><div class="sec-t">📊 All-Sites Ranking — every active site, sorted by before→after change ${tipIcon('site_rank')}${laymanSub('site_rank')}<span class="cw-hint">Catches the "everyone got quieter" trap. If your target is near the top of the list but most sites also improved, the network — not the fix — moved the number. Sites that went 0→active (NEW) or active→0 (DIED) are pulled out below the table because their %-change is meaningless without a baseline.</span></div>
-      <div class="ch" id="ch-allsites" style="height:${Math.max(180, Math.min(420, cmp.sortedByChange.length * 22 + 40))}px"></div>
+            const fallbackNote = rk.cpuFallback ? ` <span class="cw2" style="font-weight:600">Ranked by CPU — SiteGround doesn't report per-site ${rk.focusKey}, so the per-site ranking falls back to CPU.</span>` : '';
+            const sortLabel = rk.cpuFallback ? 'CPU' : rk.label;
+            return `<div class="sec"><div class="sec-t">📊 All-Sites Ranking — every active site, sorted by before→after <strong>${esc(sortLabel)}</strong> change ${tipIcon('site_rank')}${laymanSub('site_rank')}<span class="cw-hint">Catches the "everyone got quieter" trap. If your target is near the top of the list but most sites also improved, the network — not the fix — moved the number.${fallbackNote} Sites that went 0→active (NEW) or active→0 (DIED) are pulled out below the table because their %-change is meaningless without a baseline.</span></div>
+      <div class="ch" id="ch-allsites" style="height:${Math.max(180, Math.min(420, rk.rows.length * 22 + 40))}px"></div>
       <div class="tw" style="margin-top:10px"><table class="rank-tbl"><thead><tr>
         <th>Rank</th><th>Site</th>
         <th ${tipAttr('activity_class')}>Activity</th>
-        <th class="r" data-tip="${esc('Average daily CPU seconds for this site over the <strong>before</strong> window.')}">Before avg</th>
-        <th class="r" data-tip="${esc('Average daily CPU seconds for this site over the <strong>after</strong> window.')}">After avg</th>
-        <th class="r" data-tip="${esc('Per-site percent change in average daily CPU between the before and after windows. Different from the headline Net Effect — that one compares the target site against the rest of the network. This is just (afterAvg − beforeAvg) / beforeAvg × 100 for each site individually.')}">% Change</th>
-        <th class="r" data-tip="${esc('Absolute change in CPU sec/day between the windows. Useful when % change is misleading (small site with big % but tiny absolute).')}">Abs Δ/day</th>
-        <th class="r" ${tipAttr('cpu_exec_growth')}>Per-req Δ%</th>
+        <th class="r" data-tip="${esc(`Average daily ${sortLabel} (${rk.unit}) for this site over the <strong>before</strong> window.`)}">Before avg</th>
+        <th class="r" data-tip="${esc(`Average daily ${sortLabel} (${rk.unit}) for this site over the <strong>after</strong> window.`)}">After avg</th>
+        <th class="r" data-tip="${esc(`Per-site percent change in ${sortLabel} between the before and after windows. Different from the headline Net Effect — that one compares the target site against the rest of the network.`)}">% Change</th>
+        <th class="r" data-tip="${esc(`Absolute change in ${rk.unit} between the windows.`)}">Abs Δ</th>
+        ${isCost ? '' : `<th class="r" ${tipAttr('cpu_exec_growth')}>Per-req Δ%</th>`}
       </tr></thead><tbody>${rows}</tbody></table></div>
       ${newDiedHtml}${deadHtml}
       <div style="font-size:11px;color:var(--text-faint);margin-top:8px;line-height:1.6">
-        Median site change: <strong class="${clsCh(med?.pctCh)}">${signStr(med?.pctCh)}</strong> &middot; Network total: <strong class="${clsCh(cmp.networkPctCh)}">${signStr(cmp.networkPctCh)}</strong> &middot; Target: <strong class="${clsCh(cmp.targetPctCh)}">${signStr(cmp.targetPctCh)}</strong>
+        Median site change: <strong class="${clsCh(med?.rankCh)}">${signStr(med?.rankCh)}</strong> &middot; Network: <strong class="${clsCh(fLens.netCh)}">${signStr(fLens.netCh)}</strong> &middot; Target: <strong class="${clsCh(fLens.tgtCh)}">${signStr(fLens.tgtCh)}</strong>
       </div>
     </div>`;
         }
@@ -5408,11 +5692,16 @@ svg.spark{display:inline-block;vertical-align:middle}
             const limit = data.limitMap.get(date) || 9;
             const share = acct ? (tgt / acct * 100).toFixed(2) : '—';
             const ratio = ctl ? (tgt / ctl * 100).toFixed(2) : '—';
+            // Cost focus: show the target's per-request cost for the day so the table speaks
+            // the same metric as the chart + hero above it.
+            const showCost = fixFocus === 'cost' && data.hasExec;
+            const costReq = showCost ? (exec > 0 ? fmtD(data.sv(target, date) / data.ev(target, date), 3) : '—') : null;
             return `<tr class="${inc ? 'incomplete' : ''}"><td>${esc(date)}${inc ? `<span class="inc-badge" ${tipAttr('incomplete_day')}>partial</span>` : ''}</td>
       <td><span class="av-b ${isBefore ? '' : 'on'}" style="font-size:10px">${isBefore ? 'Before' : 'After'}</span></td>
       <td class="r">${fmtN(tgt)}</td><td class="r">${fmtN(ctl)}</td><td class="r">${fmtN(acct)}</td>
       <td class="r">${share}%</td><td class="r">${ratio}%</td>
       ${exec !== null ? `<td class="r">${fmtN(exec)}</td>` : ''}
+      ${costReq !== null ? `<td class="r"><strong>${costReq}</strong></td>` : ''}
       <td class="r ${coresUsed > limit * 0.75 ? 'cr' : ''}">${coresUsed} / ${limit}</td>
     </tr>`;
         }
@@ -5431,11 +5720,12 @@ svg.spark{display:inline-block;vertical-align:middle}
             cobble: 'Cobblestone domains', unpatched: 'Unpatched',
             lms_core: 'LMS Core 4', non_lms: 'Non-LMS', custom: 'Custom'
         })[ctrlPreset] || 'Selected';
-        const renderLens = (lens, fmtFn) => {
-            const tCh = lens.tgtCh, nCh = lens.netCh;
-            // Net effect uses the WHOLE NETWORK as baseline regardless of which
-            // group the user picked — that's the consistent, statistically-robust
-            // reference. The selected group is shown for context, not as the test.
+        const lensBaseName = ctrlIsNetwork ? 'the network' : 'your selected peers';
+        const renderLens = (lens, fmtFn, isPrimary) => {
+            const tCh = lens.tgtCh;
+            // Net effect is graded against the SELECTED group (baseline). When that group is the
+            // whole network the two coincide. The other peer row is shown for context.
+            const nCh = ctrlIsNetwork ? lens.netCh : lens.ctrlCh;
             const netDiD = (tCh !== null && nCh !== null) ? tCh - nCh : null;
             const heroCls = netDiD === null ? 'cn' : netDiD <= -10 ? 'cg' : netDiD >= 10 ? 'cr' : Math.abs(netDiD) > 3 ? 'cw2' : 'cn';
             const heroLbl = netDiD === null ? '—' : `${netDiD > 0 ? '+' : ''}${netDiD.toFixed(1)} pp`;
@@ -5449,24 +5739,33 @@ svg.spark{display:inline-block;vertical-align:middle}
           </div>
         </div>`;
             };
-            const verdict = netDiD === null ? 'Insufficient data' : netDiD <= -15 ? `✅ Target beat the network by ${Math.abs(netDiD).toFixed(0)} pp` : netDiD < -5 ? `⚠️ Modest peer-relative gain (${netDiD.toFixed(1)} pp)` : Math.abs(netDiD) <= 5 ? `→ Target moved with the network — no isolated effect` : `🔴 Target underperformed peers by ${netDiD.toFixed(1)} pp`;
-            return `<div class="lens-card">
-        <div class="lens-card-h">${tipIcon(lens.tip)} ${esc(lens.label)} <span class="lens-card-unit">(${esc(lens.unit)})</span></div>
+            const verdict = netDiD === null ? 'Insufficient data' : netDiD <= -15 ? `✅ Target beat ${lensBaseName} by ${Math.abs(netDiD).toFixed(0)} pp` : netDiD < -5 ? `⚠️ Modest peer-relative gain (${netDiD.toFixed(1)} pp)` : Math.abs(netDiD) <= 5 ? `→ Target moved with ${lensBaseName} — no isolated effect` : `🔴 Target underperformed ${lensBaseName} by ${netDiD.toFixed(1)} pp`;
+            // Mark whichever peer row is the active baseline (plain text — row() escapes labels).
+            return `<div class="lens-card${isPrimary ? ' lens-primary' : ''}">
+        <div class="lens-card-h">${tipIcon(lens.tip)} ${esc(lens.label)} <span class="lens-card-unit">(${esc(lens.unit)})</span>${isPrimary ? '<span class="lens-primary-badge">your focus</span>' : ''}</div>
         <div class="lens-card-hero ${heroCls}">${heroLbl}</div>
         <div class="lens-card-verdict">${verdict}</div>
         <div class="lens-rows">
           ${row('Target (' + target.split('.')[0] + ')', lens.tgtBefore, lens.tgtAfter, lens.tgtCh)}
-          ${ctrlIsNetwork ? '' : row(`${ctrlLabel} (${ctrlDoms.length} site${ctrlDoms.length === 1 ? '' : 's'})`, lens.ctrlBefore, lens.ctrlAfter, lens.ctrlCh)}
-          ${row('Whole Network (' + cmp.networkDoms.length + ' sites)', lens.netBefore, lens.netAfter, lens.netCh)}
+          ${ctrlIsNetwork ? '' : row(`${ctrlLabel} (${ctrlDoms.length} site${ctrlDoms.length === 1 ? '' : 's'}) · baseline`, lens.ctrlBefore, lens.ctrlAfter, lens.ctrlCh)}
+          ${row('Whole Network (' + cmp.networkDoms.length + ' sites)' + (ctrlIsNetwork ? ' · baseline' : ' · context'), lens.netBefore, lens.netAfter, lens.netCh)}
         </div>
       </div>`;
         };
+        // Which lens (if any) matches the chosen Fix Focus — that one renders first and gets a
+        // "your focus" badge so the eye lands on the metric the report is actually about.
+        const focusLensKey = fixFocus === 'cost' ? 'perExec' : fixFocus === 'execs' ? 'exec' : fixFocus === 'cpu' ? 'cpu' : null;
+        const lensDefs = [
+            { key: 'exec', lens: cmp.lenses.exec, fmt: fmtN },
+            { key: 'cpu', lens: cmp.lenses.cpu, fmt: fmtN },
+            { key: 'perExec', lens: cmp.lenses.perExec, fmt: v => fmtD(v, 3) + 's' }
+        ];
+        if (focusLensKey)
+            lensDefs.sort( (a, b) => (a.key === focusLensKey ? -1 : 0) - (b.key === focusLensKey ? -1 : 0));
         const lensesHtml = `<div class="lens-row-strip">
-      <div class="lens-strip-h">📐 Three-Lens Fix Verdict <span class="lens-strip-sub">Read all three to know whether traffic dropped, total CPU dropped, or each request got cheaper. The big "pp" number is target's % change minus the whole network's — the isolated, plan-immune, peer-relative reading.${ctrlIsNetwork ? ' Your selected group IS the whole network, so only one peer row is shown.' : ` Your selected group (${esc(ctrlLabel)}) is shown for context alongside the network baseline.`}</span></div>
+      <div class="lens-strip-h">📐 Three-Lens Fix Verdict <span class="lens-strip-sub">Read all three to know whether traffic dropped, total CPU dropped, or each request got cheaper. The big "pp" number is target's % change minus ${ctrlIsNetwork ? "the whole network's" : 'your selected group\'s'} — the isolated, plan-immune, peer-relative reading.${ctrlIsNetwork ? ' Your selected group IS the whole network, so only one peer row is shown.' : ` Your selected group (${esc(ctrlLabel)}) is the baseline; the whole network is shown as a context row.`}</span></div>
       <div class="lens-grid">
-        ${renderLens(cmp.lenses.exec, fmtN)}
-        ${renderLens(cmp.lenses.cpu, fmtN)}
-        ${renderLens(cmp.lenses.perExec, v => fmtD(v, 3) + 's')}
+        ${lensDefs.map(d => renderLens(d.lens, d.fmt, d.key === focusLensKey)).join('')}
       </div>
     </div>`;
         const excludedHtml = cmp.excludedFromNet.length ? `<div class="excl-banner" data-tip="${esc('<strong>Excluded sites</strong> are dropped from every per-site calculation: control group, network, ranking, and DiD. ' + cmp.excludedFromNet.length + ' sites currently excluded: ' + cmp.excludedFromNet.join(', '))}"><span style="font-weight:700">🚫 ${cmp.excludedFromNet.length} sites excluded</span> from the network + ranking comparisons · <span style="text-decoration:underline">click to manage</span></div>` : '';
@@ -5485,7 +5784,7 @@ svg.spark{display:inline-block;vertical-align:middle}
         if (useCustom && cBefStart && cAftEnd)
             filterCtx.push('custom date range');
         const filterCtxHtml = filterCtx.length ? `<div class="filter-ctx">🔎 Filters active: <strong>${filterCtx.join(' · ')}</strong></div>` : '';
-        const summTxt = buildSummTxt(cmp, target, fixDate, ctrlDoms, interp);
+        const summTxt = buildSummTxt(cmp, target, fixDate, ctrlDoms, interp, fixFocus);
         out.innerHTML = `
     <div class="sbar"><strong>${esc(target)}</strong> &nbsp;·&nbsp; Fix: <strong>${esc(fixDate)}</strong> &nbsp;·&nbsp; Before: ${esc(cmp.bStart)}→${esc(cmp.bEnd)} (<strong>${cmp.bDates.length}</strong> days) &nbsp;·&nbsp; After: ${esc(cmp.aStart)}→${esc(cmp.aEnd)} (<strong>${cmp.aDates.length}</strong> days) &nbsp;·&nbsp; Control${ctrlPreset === 'auto' ? ' (frozen)' : ''} (${ctrlDoms.length}): <span style="color:#94a3b8">${esc(ctrlDoms.length > 6 ? ctrlDoms.slice(0, 6).join(', ') + ` +${ctrlDoms.length - 6} more` : ctrlDoms.join(', '))}</span></div>
     ${excludedHtml}
@@ -5495,10 +5794,14 @@ svg.spark{display:inline-block;vertical-align:middle}
     ${curStatHtml}
     ${credHtml}
     ${showNeHero ? neHtml : ''}
-    ${pairedHtml}
-    ${interp.length ? `<div class="interp"><div class="interp-t">📊 Data Interpretation</div>${interp.map(l => `<div class="interp-item">${l}</div>`).join('')}</div>` : ''}
+    ${showNeHero ? pairedHtml : ''}
+    ${interp.length ? `<div class="interp"><div class="interp-t">📊 ${fixFocus !== 'auto' ? esc(FOCUS_LABELS[fixFocus] || 'Fix') + ' — Analysis' : 'Data Interpretation'}</div>${interp.map(l => `<div class="interp-item">${l}</div>`).join('')}</div>` : ''}
     <div class="cmps">${cards.join('')}</div>
-    <div class="cw"><div class="cw-t">📉 Target vs Control vs Account — fix date marked ${tipIcon('control_group')}${laymanSub('control_group')}<span class="cw-hint">Blue line = your target site, pink dashed = control group total, dark line = whole-account CPU, grey thin = server cores in use. The amber 'Fix' marker shows the fix date. After-period is lightly shaded.</span></div><div class="ch tall" id="ch-cmp"></div></div>
+    <div class="cw"><div class="cw-t">📉 ${fixFocus === 'memory' || fixFocus === 'cores'
+        ? `${esc(FOCUS_LABELS[fixFocus])} over the window — server-wide ${tipIcon('control_group')}<span class="cw-hint">${esc(FOCUS_LABELS[fixFocus])} is reported account-wide only (SiteGround doesn't break it down per site), so this plots the single server series with the before/after window averages and the Fix marker. Read it alongside the target's CPU-share movement in the hero above.</span>`
+        : fixFocus !== 'auto' && fixFocus !== 'cpu'
+        ? `${esc(FOCUS_LABELS[fixFocus])}: Target vs Control vs Network — fix date marked ${tipIcon('control_group')}${laymanSub('control_group')}<span class="cw-hint">All three lines are now in <strong>${esc(FOCUS_LABELS[fixFocus])}</strong> (${fixFocus === 'cost' ? 'sec/req' : 'req/day'}) — matching your Fix Focus, so the chart can't drift against a different metric than the verdict above. Blue = target, dashed purple = control group, dark = whole network. Dotted lines mark the target's before/after window average; amber = the fix date; the after-period is lightly shaded.</span>`
+        : `Target vs Control vs Account — fix date marked ${tipIcon('control_group')}${laymanSub('control_group')}<span class="cw-hint">Blue line = your target site, pink dashed = control group total, dark line = whole-account CPU, grey thin = server cores in use. The amber 'Fix' marker shows the fix date. After-period is lightly shaded.</span>`}</div><div class="ch tall" id="ch-cmp"></div></div>
     ${data.hasExec ? `<div class="cw"><div class="cw-t">⚙️ Volume vs Cost — has each request gotten cheaper, or are there just fewer of them? ${tipIcon('cpu_exec_ratio')}${laymanSub('cpu_exec_ratio')}<span class="cw-hint">Two stories overlaid: bars are <strong>daily executions</strong> (volume), line is <strong>CPU per execution</strong> (cost per request). The win pattern you're looking for: bars stay similar height but the line drops — that means traffic didn't change, you just made each hit cheaper. Bars dropping with line steady = you blocked traffic instead.</span></div><div class="ch tall" id="ch-cmp-cost"></div></div>` : ''}
     ${data.hasMem ? `<div class="cw"><div class="cw-t">🧠 Memory (GB) over the window ${tipIcon('mem_combined')}${laymanSub('mem_combined')}<span class="cw-hint">Daily peak memory used (GB). Fixes that drop CPU should usually also reduce memory pressure — if memory stayed the same, the fix was CPU-only.</span></div><div class="ch" id="ch-cmp-mem"></div></div>` : ''}
     <div class="sec"><div class="sec-t">Daily Breakdown</div>
@@ -5510,20 +5813,194 @@ svg.spark{display:inline-block;vertical-align:middle}
       <th class="r" ${tipAttr('target_share')}>Tgt %</th>
       <th class="r" ${tipAttr('target_ratio')}>Tgt/Ctrl</th>
       ${data.hasExec ? `<th class="r" ${tipAttr('program_executions')}>Exec</th>` : ''}
+      ${fixFocus === 'cost' && data.hasExec ? `<th class="r" ${tipAttr('cpu_exec_ratio')}>Cost/req</th>` : ''}
       <th class="r" ${tipAttr('core_pct')}>Cores Used</th>
     </tr></thead><tbody>${dailyRows.join('')}</tbody></table></div></div>
     ${rankHtml}
     <div class="sec"><div class="sec-t">Summary Text &nbsp;<button class="btn sec sm" data-a="copy">Copy</button></div><div class="summbox" id="sum-box">${esc(summTxt)}</div></div>`;
         setTimeout( () => {
-            initCmpChart(data, target, fixDate, cmp, ctrlDoms);
-            if (cmp.sortedByChange.length)
-                initAllSitesRank(cmp, target);
+            initCmpChart(data, target, fixDate, cmp, ctrlDoms, fixFocus);
+            if (rk.rows.length)
+                initAllSitesRank(rk, target);
         }
         , 0);
     }
     ;
 
-    const initCmpChart = (data, target, fixDate, cmp, ctrlDoms) => {
+    // ── Fix Focus metric resolver ─────────────────────────────────────────────
+    // Single source of truth for "which series does the evidence layer plot/sort/express
+    // when the user picks a Fix Focus". The verdict layer (hero, lenses, interpret) is already
+    // focus-aware; this lets the charts, ranking and daily table follow the SAME metric so the
+    // evidence underneath the verdict can't drift against a different number.
+    //
+    // Returns, aligned to allD = [...bDates, ...aDates]:
+    //   daily.{target,control,network}  per-day series (per-site metrics: cpu/execs/cost)
+    //   daily.account                   per-day server-wide series (memory/cores — SG reports no per-site)
+    //   means.{tB,tA,cB,cA,nB,nA,accB,accA}  window means, kept consistent with the lens/hero numbers
+    // Cost is a ratio: the per-day series is dailyCPU/dailyExec (null on zero-exec days), while the
+    // window means come from the lens (sum/sum, weighted) so the chart's mean markLines match the hero.
+    const focusMetric = (focus, cmp, data, target, ctrlDoms) => {
+        const allD = [...cmp.bDates, ...cmp.aDates];
+        const sumOver = (doms, d, get) => doms.reduce((s, dd) => s + get(dd, d), 0);
+        const net = cmp.networkDoms;
+        const f = (() => {
+            if (focus === 'execs') return {
+                key: 'execs', label: 'Executions', unit: 'req/day', fmt: fmtN, perSiteDiD: true, accountOnly: false,
+                tgt: d => data.ev(target, d), ctl: d => sumOver(ctrlDoms, d, data.ev), nw: d => sumOver(net, d, data.ev),
+                lens: cmp.lenses.exec
+            };
+            if (focus === 'cost') return {
+                key: 'cost', label: 'Cost per request', unit: 'sec/req', fmt: v => fmtD(v, 3), perSiteDiD: true, accountOnly: false,
+                tgt: d => { const e = data.ev(target, d); return e > 0 ? data.sv(target, d) / e : null; },
+                ctl: d => { const e = sumOver(ctrlDoms, d, data.ev); return e > 0 ? sumOver(ctrlDoms, d, data.sv) / e : null; },
+                nw: d => { const e = sumOver(net, d, data.ev); return e > 0 ? sumOver(net, d, data.sv) / e : null; },
+                lens: cmp.lenses.perExec
+            };
+            if (focus === 'memory') return {
+                key: 'memory', label: 'Memory used', unit: 'GB', fmt: v => fmtD(v, 2), perSiteDiD: false, accountOnly: true,
+                acct: d => data.memDailyGbMap?.get(d) ?? null, accB: avgAll(cmp.mB), accA: avgAll(cmp.mA)
+            };
+            if (focus === 'cores') return {
+                key: 'cores', label: 'Cores in use', unit: 'cores', fmt: v => fmtD(v, 2), perSiteDiD: false, accountOnly: true,
+                acct: d => data.coresUsedMap?.get(d) ?? null, accB: avgAll(cmp.kB), accA: avgAll(cmp.kA)
+            };
+            // cpu (and the 'auto'/'combo' fallbacks) — default CPU seconds
+            return {
+                key: 'cpu', label: 'CPU Seconds', unit: 'CPU sec', fmt: fmtN, perSiteDiD: true, accountOnly: false,
+                tgt: d => data.sv(target, d), ctl: d => sumOver(ctrlDoms, d, data.sv), nw: d => sumOver(net, d, data.sv),
+                lens: cmp.lenses.cpu
+            };
+        })();
+        const daily = f.accountOnly
+            ? { target: [], control: [], network: [], account: allD.map(f.acct) }
+            : { target: allD.map(f.tgt), control: allD.map(f.ctl), network: allD.map(f.nw), account: [] };
+        const means = f.accountOnly
+            ? { accB: f.accB, accA: f.accA }
+            : { tB: f.lens.tgtBefore, tA: f.lens.tgtAfter, cB: f.lens.ctrlBefore, cA: f.lens.ctrlAfter, nB: f.lens.netBefore, nA: f.lens.netAfter };
+        return { key: f.key, label: f.label, unit: f.unit, fmt: f.fmt, perSiteDiD: f.perSiteDiD, accountOnly: f.accountOnly, allD, daily, means };
+    }
+    ;
+
+    // Per-site All-Sites ranking expressed in the active Fix Focus metric. cost/execs re-sort
+    // AND re-express the before/after columns so "where does my target rank" answers the metric
+    // the report is about — not always CPU. cpu/auto stay on CPU (rows match cmp.sortedByChange).
+    // memory/cores have no per-site figure (SG limitation) so they fall back to CPU with a flag.
+    const focusRanking = (cmp, focus) => {
+        const spec = focus === 'execs'
+            ? { getCh: r => r.exCh, getB: r => r.exBAvg, getA: r => r.exAAvg, fmt: fmtN, label: 'executions', unit: 'req/day', cpuFallback: false }
+            : focus === 'cost'
+            ? { getCh: r => r.costCh, getB: r => r.costB, getA: r => r.costA, fmt: v => fmtD(v, 3), label: 'cost per request', unit: 'sec/req', cpuFallback: false }
+            : { getCh: r => r.pctCh, getB: r => r.bAvg, getA: r => r.aAvg, fmt: fmtN, label: 'CPU', unit: 'CPU sec/day', cpuFallback: (focus === 'memory' || focus === 'cores') };
+        const rows = cmp.perSiteRaw
+            .filter(r => !['NEW', 'DIED', 'INACTIVE'].includes(r.activityClass) && (r.isTarget || !isExcluded(r.domain)))
+            .map(r => {
+                const b = spec.getB(r), a = spec.getA(r), ch = spec.getCh(r);
+                return { ...r, bVal: b, aVal: a, rankCh: ch, rankAbs: (a !== null && b !== null && a !== undefined && b !== undefined) ? a - b : null };
+            })
+            .filter(r => r.rankCh !== null && isFinite(r.rankCh) && r.bVal)
+            .sort((x, y) => x.rankCh - y.rankCh);
+        const targetRank = rows.findIndex(r => r.isTarget) + 1;
+        const targetPercentile = rows.length > 1 && targetRank > 0 ? ((rows.length - targetRank) / (rows.length - 1)) * 100 : null;
+        // Network's change in this same metric (from the matching lens) — drawn as a reference
+        // marker on the ranking chart so "did the whole server move?" reads at a glance.
+        const lens = cmp.lenses[focus === 'cost' ? 'perExec' : focus === 'execs' ? 'exec' : 'cpu'];
+        const networkCh = lens ? lens.netCh : null;
+        return { rows, fmt: spec.fmt, label: spec.label, unit: spec.unit, cpuFallback: spec.cpuFallback, focusKey: focus, targetRank, targetPercentile, networkCh };
+    }
+    ;
+
+    // Main chart re-expressed in the active Fix Focus metric. Drawn into the same #ch-cmp slot.
+    // Per-site metrics (cost/execs) plot target vs control vs whole-network in that metric;
+    // server-wide metrics (memory/cores) plot a single account series — matching the hero's
+    // "this is correlation, not a per-site DiD" framing. Every series carries an end-of-line
+    // value label, and the target gets before/after window-mean markLines (consistent with the
+    // hero numbers) plus the Fix marker and shaded after-period.
+    const initFocusCmpChart = (data, target, fixDate, cmp, ctrlDoms, focus) => {
+        const fm = focusMetric(focus, cmp, data, target, ctrlDoms);
+        const allD = fm.allD;
+        const C = themeChartColors();
+        const fixMark = allD.includes(fixDate) ? [{
+            xAxis: fixDate,
+            lineStyle: { color: '#FFC20E', type: 'dashed', width: 2 },
+            label: { formatter: 'Fix', color: '#FFC20E', fontSize: 10 }
+        }] : [];
+        const afterArea = {
+            silent: true,
+            itemStyle: { color: 'rgba(39,170,225,0.05)' },
+            data: [[{ xAxis: cmp.aStart }, { xAxis: cmp.aEnd }]]
+        };
+        const endLbl = color => ({ show: true, formatter: p => fm.fmt(p.value), color, fontSize: 10, fontWeight: 700, distance: 5 });
+        const meanLine = (val, txt, color) => (val === null || val === undefined || !isFinite(val)) ? null : {
+            yAxis: +(+val).toFixed(4),
+            lineStyle: { color, type: 'dotted', width: 1.3 },
+            label: { formatter: `${txt} ${fm.fmt(val)}`, color, fontSize: 9, position: 'insideEndTop' }
+        };
+        let series, legendData;
+        if (fm.accountOnly) {
+            // Single account-level series (memory/cores have no per-site breakdown).
+            const meanMarks = [meanLine(fm.means.accB, 'before avg', '#0074B4'), meanLine(fm.means.accA, 'after avg', '#2D9E5A')].filter(Boolean);
+            legendData = [`Account ${fm.label}`];
+            series = [{
+                ...mkLn(`Account ${fm.label}`, fm.daily.account, '#27AAE1', {
+                    connectNulls: false,
+                    endLabel: endLbl('#27AAE1'),
+                    areaStyle: { color: 'rgba(39,170,225,0.10)' },
+                    markArea: afterArea,
+                    markLine: { silent: true, symbol: 'none', data: [...fixMark, ...meanMarks] }
+                })
+            }];
+        } else {
+            // Per-site: target + control group + whole network in the focus metric.
+            const meanMarks = [meanLine(fm.means.tB, 'before avg', '#0074B4'), meanLine(fm.means.tA, 'after avg', '#2D9E5A')].filter(Boolean);
+            const netName = `Whole Network (${cmp.networkDoms.length})`;
+            const ctrlName = `Control (${ctrlDoms.length})`;
+            legendData = [target, ctrlName, netName];
+            series = [{
+                ...mkLn(target, fm.daily.target, '#27AAE1', {
+                    connectNulls: false,
+                    endLabel: endLbl('#27AAE1'),
+                    markArea: afterArea,
+                    markLine: { silent: true, symbol: 'none', data: [...fixMark, ...meanMarks] }
+                })
+            }, {
+                ...mkLn(ctrlName, fm.daily.control, '#7B5EA8', {
+                    connectNulls: false, symbol: 'circle', symbolSize: 3,
+                    lineStyle: { color: '#7B5EA8', width: 2, type: 'dashed' },
+                    endLabel: endLbl('#7B5EA8')
+                })
+            }, {
+                ...mkLn(netName, fm.daily.network, '#0074B4', {
+                    connectNulls: false, symbol: 'none',
+                    lineStyle: { color: '#0074B4', width: 1.5 },
+                    endLabel: endLbl('#0074B4')
+                })
+            }];
+        }
+        cinit('ch-cmp', {
+            ...BASE,
+            legend: { ...BASE.legend, bottom: 28, data: legendData },
+            grid: { ...BASE.grid, bottom: 76, right: 92 },
+            tooltip: {
+                ...BASE.tooltip,
+                trigger: 'axis',
+                valueFormatter: v => v === null || v === undefined ? '—' : `${fm.fmt(v)} ${fm.unit}`
+            },
+            xAxis: { ...BASE.xAxis, data: allD },
+            yAxis: mkY(`${fm.label} (${fm.unit})`, {
+                axisLabel: { ...BASE.yAxis.axisLabel, formatter: v => fm.fmt(v) }
+            }),
+            series,
+            dataZoom: [...BASE.dataZoom]
+        });
+    }
+    ;
+
+    const initCmpChart = (data, target, fixDate, cmp, ctrlDoms, focus = 'auto') => {
+        // Non-CPU focuses re-express the MAIN chart (ch-cmp) in the chosen metric so it can't
+        // visually contradict the focus hero above it. The secondary volume/cost + memory charts
+        // below are metric-specific already and stay for every focus. CPU/auto keep the original
+        // rich CPU+cores main view unchanged.
+        const focusMain = !!focus && focus !== 'auto' && focus !== 'cpu';
         const allD = [...cmp.bDates, ...cmp.aDates];
         const tV = allD.map(d => Math.round(data.sv(target, d)));
         const cV = allD.map(d => Math.round(ctrlDoms.reduce( (s, cd) => s + data.sv(cd, d), 0)));
@@ -5532,7 +6009,10 @@ svg.spark{display:inline-block;vertical-align:middle}
         const kV = allD.map(d => +(data.coresUsedMap.get(d) || 0).toFixed(3));
         const eV = data.hasExec ? allD.map(d => Math.round(data.ev(target, d))) : null;
         const ml = Math.max(...allD.map(d => data.limitMap.get(d) || 9));
-        cinit('ch-cmp', {
+        // Focus-specific main chart for cost/execs/memory/cores; otherwise the CPU view below.
+        if (focusMain)
+            initFocusCmpChart(data, target, fixDate, cmp, ctrlDoms, focus);
+        if (!focusMain) cinit('ch-cmp', {
             ...BASE,
             legend: {
                 ...BASE.legend,
@@ -5828,25 +6308,25 @@ svg.spark{display:inline-block;vertical-align:middle}
     }
     ;
 
-    // Horizontal bar chart of every active site's before→after % change.
-    // Most-improved at top, regressions at bottom; target site coloured distinctly.
-    const initAllSitesRank = (cmp, target) => {
+    // Horizontal bar chart of every active site's before→after % change in the active Fix
+    // Focus metric. Most-improved at top, regressions at bottom; target coloured distinctly.
+    // Takes the focusRanking object (rk) so the bars match the table + the verdict metric.
+    const initAllSitesRank = (rk, target) => {
         // Display order for the chart: bottom of array renders at the top of the chart, so we
         // reverse once and keep every parallel array (labels/values/colors/rows) in the same
         // display order — that way the tooltip lookup by index returns the correct site.
-        const displayRows = cmp.sortedByChange.slice().reverse();
+        const displayRows = rk.rows.slice().reverse();
         const labels = displayRows.map(r => {
             const short = r.domain.length > 28 ? r.domain.slice(0, 25) + '…' : r.domain;
             return r.isTarget ? `★ ${short}` : short;
         }
         );
-        const values = displayRows.map(r => +r.pctCh.toFixed(2));
-        const colors = displayRows.map(r => r.isTarget ? '#27AAE1' : (r.pctCh < 0 ? '#2D9E5A' : '#C0392B'));
-        // Reference markers: median, network total, target. Use the original sorted-ascending
-        // list so "median" picks the middle of the sorted distribution, not the middle of the
-        // display order (which would be the same site here, but is semantically clearer this way).
-        const rows = cmp.sortedByChange;
-        const med = rows[Math.floor(rows.length / 2)]?.pctCh ?? 0;
+        const values = displayRows.map(r => +r.rankCh.toFixed(2));
+        const colors = displayRows.map(r => r.isTarget ? '#27AAE1' : (r.rankCh < 0 ? '#2D9E5A' : '#C0392B'));
+        // Reference markers: median, target. Use the original sorted-ascending list so "median"
+        // picks the middle of the sorted distribution, not the middle of the display order.
+        const rows = rk.rows;
+        const med = rows[Math.floor(rows.length / 2)]?.rankCh ?? 0;
         const markLineData = [{
             xAxis: 0,
             lineStyle: {
@@ -5874,16 +6354,16 @@ svg.spark{display:inline-block;vertical-align:middle}
                 fontSize: 9
             }
         }, ];
-        if (cmp.networkPctCh !== null)
+        if (rk.networkCh !== null && rk.networkCh !== undefined && isFinite(rk.networkCh))
             markLineData.push({
-                xAxis: +cmp.networkPctCh.toFixed(2),
+                xAxis: +rk.networkCh.toFixed(2),
                 lineStyle: {
                     color: '#7B5EA8',
                     type: 'dashed',
                     width: 1.5
                 },
                 label: {
-                    formatter: `network ${cmp.networkPctCh >= 0 ? '+' : ''}${cmp.networkPctCh.toFixed(0)}%`,
+                    formatter: `network ${rk.networkCh >= 0 ? '+' : ''}${rk.networkCh.toFixed(0)}%`,
                     position: 'end',
                     color: '#7B5EA8',
                     fontSize: 9
@@ -5910,7 +6390,7 @@ svg.spark{display:inline-block;vertical-align:middle}
                     const r = displayRows[p.dataIndex];
                     if (!r)
                         return '';
-                    return `<strong>${esc(r.domain)}</strong>${r.isTarget ? ' <span style="color:#27AAE1">[target]</span>' : ''}<br>Activity: <strong>${esc(r.activityClass)}</strong><br>Before avg: <strong>${fmtN(r.bAvg)}</strong> CPU sec/day<br>After avg: <strong>${fmtN(r.aAvg)}</strong> CPU sec/day<br>Change: <strong style="color:${r.pctCh < 0 ? '#2D9E5A' : '#C0392B'}">${signStr(r.pctCh)}</strong> (${r.absCh >= 0 ? '+' : ''}${fmtN(r.absCh)}/day)`;
+                    return `<strong>${esc(r.domain)}</strong>${r.isTarget ? ' <span style="color:#27AAE1">[target]</span>' : ''}<br>Activity: <strong>${esc(r.activityClass)}</strong><br>Before avg: <strong>${rk.fmt(r.bVal)}</strong> ${rk.unit}<br>After avg: <strong>${rk.fmt(r.aVal)}</strong> ${rk.unit}<br>Change: <strong style="color:${r.rankCh < 0 ? '#2D9E5A' : '#C0392B'}">${signStr(r.rankCh)}</strong> (${r.rankAbs >= 0 ? '+' : ''}${rk.fmt(r.rankAbs)})`;
                 }
             },
             xAxis: {
@@ -5968,8 +6448,58 @@ svg.spark{display:inline-block;vertical-align:middle}
     }
     ;
 
-    const buildSummTxt = (cmp, target, fixDate, ctrlDoms, interp) => {
+    const buildSummTxt = (cmp, target, fixDate, ctrlDoms, interp, focus = 'auto') => {
         const pad = (s, n) => String(s).padEnd(n);
+        const data = S.data || {};
+        const focusMode = focus !== 'auto' && focus !== 'cpu';
+        // Focus headline block — leads the copyable report with the metric the user chose,
+        // run as a DiD on THAT metric (not CPU), so the text never contradicts the report title.
+        const focusLines = ( () => {
+            if (!focusMode)
+                return [];
+            const dash = '─'.repeat(72);
+            const ls = [``, `FIX FOCUS — ${(FOCUS_LABELS[focus] || focus).toUpperCase()}`, dash];
+            if (focus === 'cost' || focus === 'execs') {
+                if (!data.hasExec)
+                    return [...ls, `Execution data unavailable — cannot compute this metric.`];
+                const lens = focus === 'cost' ? cmp.lenses.perExec : cmp.lenses.exec;
+                const fmtv = focus === 'cost' ? (v => v === null ? '—' : fmtD(v, 3)) : (v => v === null ? '—' : fmtN(v));
+                const unit = focus === 'cost' ? 'sec/req' : 'req/day';
+                const did = (lens.tgtCh !== null && lens.netCh !== null) ? lens.tgtCh - lens.netCh : null;
+                ls.push(`Target                  ${signStr(lens.tgtCh).padEnd(10)}  ${fmtv(lens.tgtBefore)} -> ${fmtv(lens.tgtAfter)} ${unit}`, `Network (${String(cmp.networkDoms.length).padStart(2)} sites)        ${signStr(lens.netCh).padEnd(10)}  ${fmtv(lens.netBefore)} -> ${fmtv(lens.netAfter)} ${unit}`, `NET EFFECT vs network   ${did === null ? '—' : (did >= 0 ? '+' : '') + did.toFixed(1) + ' pp'}`);
+                const fs = focusSeries(cmp, focus);
+                const st = fs && fs.b.length >= 2 && fs.a.length >= 2 ? welchT(fs.b, fs.a) : null;
+                if (st)
+                    ls.push(`Welch's t-test:         p=${st.p < 0.001 ? '<0.001' : st.p.toFixed(3)}, df=${st.df.toFixed(1)} (${st.p < 0.05 ? 'significant' : 'not significant'})`);
+            } else if (focus === 'memory' || focus === 'cores') {
+                const isMem = focus === 'memory';
+                const bAvg = avgAll(isMem ? cmp.mB : cmp.kB), aAvg = avgAll(isMem ? cmp.mA : cmp.kA);
+                const ch = pctCh(bAvg, aAvg);
+                const unit = isMem ? 'GB' : 'cores';
+                ls.push(`${pad(isMem ? 'Account memory' : 'Cores in use', 24)}${signStr(ch).padEnd(10)}  ${fmtD(bAvg, 2)} -> ${fmtD(aAvg, 2)} ${unit}/day`, `(Per-site ${isMem ? 'memory' : 'cores'} not reported by SiteGround — attribution via CPU share)`);
+            } else if (focus === 'combo') {
+                const row = (lbl, lens) => {
+                    if (!lens || lens.tgtCh === null)
+                        return;
+                    const did = (lens.tgtCh !== null && lens.netCh !== null) ? lens.tgtCh - lens.netCh : null;
+                    ls.push(`${pad(lbl, 16)} tgt ${signStr(lens.tgtCh).padEnd(9)} net ${signStr(lens.netCh).padEnd(9)} DiD ${did === null ? '—' : (did >= 0 ? '+' : '') + did.toFixed(1) + 'pp'}`);
+                }
+                ;
+                if (data.hasExec) {
+                    row('Cost/request', cmp.lenses.perExec);
+                    row('Volume', cmp.lenses.exec);
+                }
+                row('CPU time', cmp.lenses.cpu);
+                if (data.hasMem) {
+                    const mb = avgAll(cmp.mB), ma = avgAll(cmp.mA);
+                    ls.push(`${pad('Memory (srv)', 16)} ${signStr(pctCh(mb, ma))}  ${fmtD(mb, 2)} -> ${fmtD(ma, 2)} GB`);
+                }
+                const kb = avgAll(cmp.kB), ka = avgAll(cmp.kA);
+                ls.push(`${pad('Cores (srv)', 16)} ${signStr(pctCh(kb, ka))}  ${fmtD(kb, 2)} -> ${fmtD(ka, 2)}`);
+            }
+            return ls;
+        }
+        )();
         const credLines = [];
         if (cmp.credibility) {
             credLines.push(``, `CREDIBILITY: ${cmp.credibility.score}/100 (${cmp.credibility.verdict})`, '─'.repeat(72));
@@ -5978,18 +6508,25 @@ svg.spark{display:inline-block;vertical-align:middle}
             if (cmp.planStraddles?.length)
                 cmp.planStraddles.forEach(p => credLines.push(`  ! PLAN CHANGE INSIDE WINDOW: ${p.kind} ${p.fromVal}->${p.toVal} on ${p.date}`));
         }
+        // Verdicts are graded against the SELECTED comparison group (baseline). Label "Network"
+        // only when the selected group IS the whole network; otherwise name it the baseline.
+        const baseTxt = cmp.ctrlIsNetwork ? 'Network' : 'Baseline';
+        const baseVs = cmp.ctrlIsNetwork ? 'network' : 'baseline';
         const pairedLines = [];
         if (cmp.netEffectPctPaired !== null && cmp.tBPaired.length >= 2) {
             const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-            pairedLines.push(``, `WEEKDAY-PAIRED DiD (${cmp.tBPaired.length} matched pairs, weekdays: ${cmp.dowsCovered.map(d => dows[d]).join(',') || '-'})`, '─'.repeat(72), `Target (paired)         ${signStr(cmp.targetPctChPaired).padEnd(10)}  ${fmtN(cmp.tBPAvg)} -> ${fmtN(cmp.tAPAvg)} CPU sec/day`, `Network (paired)        ${signStr(cmp.networkPctChPaired).padEnd(10)}  ${fmtN(cmp.nBPAvg)} -> ${fmtN(cmp.nAPAvg)} CPU sec/day`, `Net effect (paired)     ${(cmp.netEffectPctPaired >= 0 ? '+' : '') + cmp.netEffectPctPaired.toFixed(1)} pp`);
+            pairedLines.push(``, `WEEKDAY-PAIRED DiD (${cmp.tBPaired.length} matched pairs, weekdays: ${cmp.dowsCovered.map(d => dows[d]).join(',') || '-'})`, '─'.repeat(72), `Target (paired)         ${signStr(cmp.targetPctChPaired).padEnd(10)}  ${fmtN(cmp.tBPAvg)} -> ${fmtN(cmp.tAPAvg)} CPU sec/day`, `${pad(baseTxt + ' (paired)', 24)}${signStr(cmp.baselinePctChPaired).padEnd(10)}  ${fmtN(cmp.cBPAvg)} -> ${fmtN(cmp.cAPAvg)} CPU sec/day`, `Net effect (paired)     ${(cmp.netEffectPctPaired >= 0 ? '+' : '') + cmp.netEffectPctPaired.toFixed(1)} pp`);
             if (cmp.statResid)
                 pairedLines.push(`DiD residual t-test:    p=${cmp.statResid.p < 0.001 ? '<0.001' : cmp.statResid.p.toFixed(3)}, df=${cmp.statResid.df.toFixed(1)}${cmp.statResid.p < 0.05 ? ' (significant isolated effect)' : ' (not statistically significant)'}`);
         }
         const didLines = [];
         if (cmp.netEffectPct !== null) {
-            didLines.push(``, `NET EFFECT (Difference-in-Differences)`, '─'.repeat(72), `Target change           ${signStr(cmp.targetPctCh).padEnd(10)}  ${fmtN(cmp.tAvgB)} -> ${fmtN(cmp.tAvgA)} CPU sec/day`, `Network change (${String(cmp.networkDoms.length).padStart(2)} sites) ${signStr(cmp.networkPctCh).padEnd(10)}  ${fmtN(cmp.nAvgB)} -> ${fmtN(cmp.nAvgA)} CPU sec/day`, `NET EFFECT vs network   ${(cmp.netEffectPct >= 0 ? '+' : '') + cmp.netEffectPct.toFixed(1)} pp`);
+            didLines.push(``, `NET EFFECT (Difference-in-Differences)`, '─'.repeat(72), `Target change           ${signStr(cmp.targetPctCh).padEnd(10)}  ${fmtN(cmp.tAvgB)} -> ${fmtN(cmp.tAvgA)} CPU sec/day`, `${pad(baseTxt + ' change (' + cmp.ctrlDoms.length + ')', 24)}${signStr(cmp.baselinePctCh).padEnd(10)}  ${fmtN(cmp.cAvgB)} -> ${fmtN(cmp.cAvgA)} CPU sec/day`, `NET EFFECT vs ${baseVs}${baseVs === 'network' ? '   ' : '  '} ${(cmp.netEffectPct >= 0 ? '+' : '') + cmp.netEffectPct.toFixed(1)} pp`);
             if (cmp.expectedAfter !== null && cmp.savedCpuPerDay !== null) {
                 didLines.push(`Expected after (counterfactual): ${fmtN(cmp.expectedAfter)} CPU sec/day`, `Actual after:                     ${fmtN(cmp.tAvgA)} CPU sec/day`, `Net ${cmp.savedCpuPerDay >= 0 ? 'saving' : 'loss'} vs counterfactual:    ${fmtN(Math.abs(cmp.savedCpuPerDay))} CPU sec/day`);
+            }
+            if (!cmp.ctrlIsNetwork && cmp.netEffectPctVsNetwork !== null) {
+                didLines.push(`(Context — vs whole network of ${cmp.networkDoms.length}: ${fmtN(cmp.nAvgB)} -> ${fmtN(cmp.nAvgA)}, net effect ${(cmp.netEffectPctVsNetwork >= 0 ? '+' : '') + cmp.netEffectPctVsNetwork.toFixed(1)} pp)`);
             }
             if (cmp.targetRank > 0) {
                 didLines.push(`Target rank: #${cmp.targetRank} of ${cmp.perSite.length} sites${cmp.targetPercentile !== null ? ` (improved more than ${cmp.targetPercentile.toFixed(0)}% of peers)` : ''}`);
@@ -5998,10 +6535,13 @@ svg.spark{display:inline-block;vertical-align:middle}
         const rankRows = cmp.sortedByChange.slice(0, 10).map( (r, i) => `${('#' + (i + 1)).padEnd(4)} ${pad(r.activityClass, 8)} ${pad(r.domain, 38)} ${pad(fmtN(r.bAvg), 10)} -> ${pad(fmtN(r.aAvg), 10)} ${signStr(r.pctCh)}${r.isTarget ? '  <- TARGET' : ''}`);
         // Brand banner + footer for the clipboard text. Used by Copy Summary.
         const heavy = '━'.repeat(72);
-        const brandHead = ['', heavy, '  COBBLESTONE LEARNING — LEARNING · CREATIVITY · TRUST', '  SiteGround CPU Analysis Report', heavy, ''];
+        const reportTitle = focusMode ? `  SiteGround ${FOCUS_LABELS[focus] || 'Analysis'} Report` : '  SiteGround CPU Analysis Report';
+        const brandHead = ['', heavy, '  COBBLESTONE LEARNING — LEARNING · CREATIVITY · TRUST', reportTitle, heavy, ''];
         const brandFoot = ['', heavy, '  Cobblestone Learning, 5 Lombard Street, Dublin 2, Ireland', '  info@cobblestonelearning.com · +353 1 908 1582 · www.cobblestonelearning.com', heavy];
-        // Splice cred + paired blocks into the legacy didLines section
-        const allDidLines = [...credLines, ...(cmp.stat ? [``, `Welch's t-test (raw target): p=${cmp.stat.p < 0.001 ? '<0.001' : cmp.stat.p.toFixed(3)}, df=${cmp.stat.df.toFixed(1)}, diff=${fmtN(cmp.stat.diff)} CPU sec/day, 95% CI [${fmtN(cmp.stat.ci95[0])}, ${fmtN(cmp.stat.ci95[1])}]`] : []), ...didLines, ...pairedLines, ];
+        // In focus mode the CPU-centric DiD / Welch / weekday-paired blocks are suppressed —
+        // they refer to CPU time, the wrong metric for a cost/exec/memory/cores report, and would
+        // contradict the headline. focusLines carries the right numbers. CPU + auto keep full detail.
+        const allDidLines = focusMode ? [...credLines, ...focusLines] : [...credLines, ...(cmp.stat ? [``, `Welch's t-test (raw target): p=${cmp.stat.p < 0.001 ? '<0.001' : cmp.stat.p.toFixed(3)}, df=${cmp.stat.df.toFixed(1)}, diff=${fmtN(cmp.stat.diff)} CPU sec/day, 95% CI [${fmtN(cmp.stat.ci95[0])}, ${fmtN(cmp.stat.ci95[1])}]`] : []), ...didLines, ...pairedLines, ];
         return [...brandHead, `Site analysed: ${target}`, `Generated:     ${new Date().toISOString().slice(0, 19).replace('T', ' ')} UTC`, `Fix:           ${fixDate}  Before: ${cmp.bStart}→${cmp.bEnd} (${cmp.bDates.length} days)  After: ${cmp.aStart}→${cmp.aEnd} (${cmp.aDates.length} days)`, `Control: ${ctrlDoms.join(', ')}`, ...allDidLines, ``, `METRIC                          BEFORE           AFTER            CHANGE`, '\u2500'.repeat(72), ...cmp.metrics.map(m => `${pad(m.title, 32)}${pad(m.fmt(m.before) + ' ' + m.unit, 17)}${pad(m.fmt(m.after) + ' ' + m.unit, 17)}${signStr(pctCh(m.before, m.after))}`), ...(rankRows.length ? [``, `TOP 10 MOST-IMPROVED SITES`, '\u2500'.repeat(72), ...rankRows] : []), ``, `INTERPRETATION`, '\u2500'.repeat(72), ...interp.map(l => l.replace(/<[^>]+>/g, '')), ...brandFoot].join('\n');
     }
     ;
@@ -6237,10 +6777,15 @@ ul.bul li::before { content: '•'; position: absolute; left: 0; color: #27AAE1;
         const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const site = target.split('.')[0];
         const planLine = data.planChanges?.length ? `<p style="margin:6pt 0 0;font-size:9pt;color:#0074B4">ℹ Plan upgrade during window: ${data.planChanges.map(c => `${c.kind === 'mem' ? 'memory' : 'cores'} ${c.fromVal}→${c.toVal}${c.kind === 'mem' ? 'GB' : ''} on ${c.date}`).join('; ')} — every metric is in absolute units (cores in use, GB used, CPU sec) so the comparison is plan-immune.</p>` : '';
+        // The DiD verdict is graded against the SELECTED comparison group (baseline). When that
+        // group is the whole network the wording stays "network".
+        const baseIsNet = !!cmp.ctrlIsNetwork;
+        const baseWord = baseIsNet ? 'the network' : 'your selected peers';
+        const baseTitle = baseIsNet ? 'Network' : 'Selected peers';
         // Headline pp number — sign-coloured per brand (green good, red bad, amber neutral).
         const heroColor = cmp.netEffectPct === null ? '#939393' : cmp.netEffectPct <= -10 ? '#2D9E5A' : cmp.netEffectPct >= 10 ? '#C0392B' : cmp.netEffectPct <= -5 ? '#0074B4' : '#8A6500';
         const heroLabel = cmp.netEffectPct === null ? '—' : `${cmp.netEffectPct > 0 ? '+' : ''}${cmp.netEffectPct.toFixed(1)} pp`;
-        const verdict = cmp.netEffectPct === null ? 'Insufficient data' : cmp.netEffectPct <= -15 ? 'Strong isolated fix effect' : cmp.netEffectPct < -5 ? 'Modest isolated effect' : Math.abs(cmp.netEffectPct) <= 5 ? 'Target moved with the network — no isolated effect' : cmp.netEffectPct > 5 ? 'Target underperformed network' : '';
+        const verdict = cmp.netEffectPct === null ? 'Insufficient data' : cmp.netEffectPct <= -15 ? 'Strong isolated fix effect' : cmp.netEffectPct < -5 ? 'Modest isolated effect' : Math.abs(cmp.netEffectPct) <= 5 ? `Target moved with ${baseWord} — no isolated effect` : cmp.netEffectPct > 5 ? `Target underperformed ${baseWord}` : '';
         // Credibility colour
         const credColor = !cmp.credibility ? '#939393' : cmp.credibility.score >= 75 ? '#2D9E5A' : cmp.credibility.score >= 50 ? '#8A6500' : '#C0392B';
         // Ranking rows — top 12 to keep one page tight; full list still available in the dashboard.
@@ -6333,11 +6878,11 @@ table.data thead td { background: #27AAE1; color: #fff; font-weight: 700; paddin
     </div>
 
     <h2>Headline result</h2>
-    <p class="section-intro">The "Net Effect" subtracts the network's drift from the target's drift, isolating the impact attributable to the fix.</p>
+    <p class="section-intro">The "Net Effect" subtracts ${baseWord}'s drift from the target's drift, isolating the impact attributable to the fix.${baseIsNet ? '' : ' The comparison baseline here is your selected peer group; the whole-network figure is shown as context below.'}</p>
     <div class="hero">
       <div class="hero-row">
         <div class="hero-cell">
-          <div class="hero-lbl">Net Effect vs network</div>
+          <div class="hero-lbl">Net Effect vs ${baseIsNet ? 'network' : 'selected peers'}</div>
           <div class="hero-big" style="color:${heroColor}">${heroLabel}</div>
           <div class="hero-sub">${esc(verdict)}</div>
         </div>
@@ -6347,13 +6892,14 @@ table.data thead td { background: #27AAE1; color: #fff; font-weight: 700; paddin
           <div class="hero-sub">${fmtN(cmp.tAvgB)} → ${fmtN(cmp.tAvgA)} CPU sec/day</div>
         </div>
         <div class="hero-cell">
-          <div class="hero-lbl">Network change <span style="color:#939393;font-weight:400">(${cmp.networkDoms.length} sites)</span></div>
-          <div class="hero-big" style="color:${cmp.networkPctCh === null ? '#939393' : cmp.networkPctCh < 0 ? '#2D9E5A' : '#C0392B'};font-size:16pt;">${signStr(cmp.networkPctCh)}</div>
-          <div class="hero-sub">${fmtN(cmp.nAvgB)} → ${fmtN(cmp.nAvgA)} CPU sec/day</div>
+          <div class="hero-lbl">${baseTitle} change <span style="color:#939393;font-weight:400">(${cmp.ctrlDoms.length} site${cmp.ctrlDoms.length === 1 ? '' : 's'})</span></div>
+          <div class="hero-big" style="color:${cmp.baselinePctCh === null ? '#939393' : cmp.baselinePctCh < 0 ? '#2D9E5A' : '#C0392B'};font-size:16pt;">${signStr(cmp.baselinePctCh)}</div>
+          <div class="hero-sub">${fmtN(cmp.cAvgB)} → ${fmtN(cmp.cAvgA)} CPU sec/day</div>
         </div>
       </div>
+      ${baseIsNet ? '' : `<div style="margin-top:10pt;font-size:8.5pt;color:#939393;">Whole-network context (${cmp.networkDoms.length} sites): ${fmtN(cmp.nAvgB)} → ${fmtN(cmp.nAvgA)} CPU sec/day (${signStr(cmp.networkPctCh)}); net effect vs network ${cmp.netEffectPctVsNetwork === null ? '—' : (cmp.netEffectPctVsNetwork > 0 ? '+' : '') + cmp.netEffectPctVsNetwork.toFixed(1) + ' pp'}.</div>`}
       ${(cmp.savedCpuPerDay !== null && cmp.expectedAfter !== null) ? `<div style="margin-top:14pt;padding-top:12pt;border-top:1pt dashed #E8ECF0;font-size:9.5pt;color:#3D3D3D;line-height:1.6;">
-        <strong>Counterfactual:</strong> had the target drifted with the network, after-CPU would sit at ~<strong>${fmtN(cmp.expectedAfter)}</strong> CPU sec/day; actual is <strong>${fmtN(cmp.tAvgA)}</strong> — a net <strong style="color:${cmp.savedCpuPerDay >= 0 ? '#2D9E5A' : '#C0392B'}">${cmp.savedCpuPerDay >= 0 ? 'saving' : 'loss'} of ${fmtN(Math.abs(cmp.savedCpuPerDay))}</strong> CPU sec/day vs that counterfactual.
+        <strong>Counterfactual:</strong> had the target drifted with ${baseWord}, after-CPU would sit at ~<strong>${fmtN(cmp.expectedAfter)}</strong> CPU sec/day; actual is <strong>${fmtN(cmp.tAvgA)}</strong> — a net <strong style="color:${cmp.savedCpuPerDay >= 0 ? '#2D9E5A' : '#C0392B'}">${cmp.savedCpuPerDay >= 0 ? 'saving' : 'loss'} of ${fmtN(Math.abs(cmp.savedCpuPerDay))}</strong> CPU sec/day vs that counterfactual.
         ${cmp.targetRank > 0 ? `<br>Target rank: <strong>#${cmp.targetRank} of ${cmp.perSite.length}</strong> active sites${cmp.targetPercentile !== null ? ` — improved more than <strong>${cmp.targetPercentile.toFixed(0)}%</strong> of peers.` : '.'}` : ''}
       </div>` : ''}
     </div>
@@ -6394,9 +6940,9 @@ table.data thead td { background: #27AAE1; color: #fff; font-weight: 700; paddin
           <div class="sub">${fmtN(cmp.tBPAvg)} → ${fmtN(cmp.tAPAvg)} CPU sec/day</div>
         </div>
         <div class="paired-cell">
-          <div class="lbl">Network (paired)</div>
-          <div class="val" style="color:${cmp.networkPctChPaired === null ? '#939393' : cmp.networkPctChPaired < 0 ? '#2D9E5A' : '#C0392B'}">${signStr(cmp.networkPctChPaired)}</div>
-          <div class="sub">${fmtN(cmp.nBPAvg)} → ${fmtN(cmp.nAPAvg)} CPU sec/day</div>
+          <div class="lbl">${baseTitle} (paired)</div>
+          <div class="val" style="color:${cmp.baselinePctChPaired === null ? '#939393' : cmp.baselinePctChPaired < 0 ? '#2D9E5A' : '#C0392B'}">${signStr(cmp.baselinePctChPaired)}</div>
+          <div class="sub">${fmtN(cmp.cBPAvg)} → ${fmtN(cmp.cAPAvg)} CPU sec/day</div>
         </div>
       </div>
       ${cmp.statResid ? `<div class="foot-note">DiD residual t-test: p=${cmp.statResid.p < 0.001 ? '<0.001' : cmp.statResid.p.toFixed(3)}, df=${cmp.statResid.df.toFixed(1)} ${cmp.statResid.p < 0.05 ? '— statistically significant isolated effect.' : '— not statistically significant.'}</div>` : ''}
@@ -7834,12 +8380,6 @@ window.addEventListener('load', function() {
                     openSiteInclusionPanel(S.data, () => renderTab(S.data));
                 return;
             }
-            // Explicit "Manage Sites" button in the Before/After filter row.
-            if (e.target?.closest('[data-a="manage-sites"]')) {
-                if (S.data)
-                    openSiteInclusionPanel(S.data, () => renderTab(S.data));
-                return;
-            }
             // Per-row exclude toggle (Sites tab) or banner pill remove. Re-derive siteStats
             // (the isExcluded flag is set at build-time) and re-render the active tab.
             const exclBtn = e.target?.closest('[data-excl-toggle]');
@@ -7888,23 +8428,6 @@ window.addEventListener('load', function() {
                 downloadRawCaptures();
             if (act === 'run-cmp')
                 renderCmpOut(S.data);
-            if (act === 'gen-report') {
-                // Rebuild the comparison from current UI inputs, then pipe to the report generator.
-                if (!S.data) {
-                    alert('No data loaded yet.');
-                    return;
-                }
-                const target = document.getElementById('cmp-tgt')?.value || S.ui.target;
-                const fixDate = document.getElementById('cmp-fix')?.value || S.ui.fixDate;
-                const daysBefore = +(document.getElementById('cmp-before')?.value || S.ui.daysBefore);
-                const daysAfter = +(document.getElementById('cmp-after')?.value || S.ui.daysAfter);
-                const ctrlPreset = document.getElementById('cmp-ctrl')?.value || S.ui.ctrlPreset;
-                const ctrlDoms = (ctrlPreset === 'auto' && S.ui.frozenCtrl?.length) ? S.ui.frozenCtrl : resolveCtrl(S.data, target, ctrlPreset);
-                const cmpOpts = buildCmpOptsFromUI(fixDate);
-                const cmp = buildCmp(S.data, target, fixDate, daysBefore, daysAfter, ctrlDoms, cmpOpts);
-                const interp = interpret(cmp, target);
-                generateBrandedReport(S.data, cmp, target, fixDate, ctrlDoms, interp);
-            }
             // Header "📄 Report" — dispatches to the right document generator for the current tab.
             if (act === 'gen-report-current') {
                 if (!S.data) {
@@ -7925,8 +8448,9 @@ window.addEventListener('load', function() {
                     const ctrlDoms = (ctrlPreset === 'auto' && S.ui.frozenCtrl?.length) ? S.ui.frozenCtrl : resolveCtrl(S.data, target, ctrlPreset);
                     const cmpOpts = buildCmpOptsFromUI(fixDate);
                     const cmp = buildCmp(S.data, target, fixDate, daysBefore, daysAfter, ctrlDoms, cmpOpts);
-                    const interp = interpret(cmp, target);
-                    generateBrandedReport(S.data, cmp, target, fixDate, ctrlDoms, interp);
+                    const fixFocus = document.getElementById('cmp-focus')?.value || S.ui.fixFocus || 'auto';
+                    const interp = interpret(cmp, target, fixFocus, S.data);
+                    generateBrandedReport(S.data, cmp, target, fixDate, ctrlDoms, interp, fixFocus);
                 } else if (t === 'trends' || t === 'raw' || t === 'guide') {
                     // No bespoke trends/raw/guide report yet — default to the Sites Overview as the
                     // closest analytical document, since trends and raw are tabular views of similar data.
@@ -8180,6 +8704,24 @@ window.addEventListener('load', function() {
     }
     ;
 
-    run();
+    // ── TEST / EMBED HOOK ─────────────────────────────────────────────────────
+    // Browser (bookmarklet / console paste): `window` exists → auto-run the UI as always.
+    // Node (test harness in /test): no `window`, but `module` exists → export the pure
+    // calculation + analysis functions for headless unit testing. The two environments are
+    // mutually exclusive in practice, so neither path interferes with the other.
+    const __SGD_TESTABLE__ = {
+        buildData, buildCmp, baseline, classifyVsBaseline, linReg, projectCross, welchT,
+        percentile, pctCh, avg, avgAll, focusSeries, focusNarrative, focusMetric, focusRanking, interpret,
+        resolveCtrl, rankByMetric, categorise, tsDate, addDays, CFG, CAP, S
+    };
+    if (typeof window !== 'undefined') {
+        // Only expose internals when a harness explicitly opts in (window.__SGD_TEST__ set
+        // before this script loads) — keeps the normal bookmarklet path from polluting window.
+        if (window.__SGD_TEST__)
+            window.__SGD_TESTABLE__ = __SGD_TESTABLE__;
+        run();
+    }
+    if (typeof module !== 'undefined' && module.exports)
+        module.exports = __SGD_TESTABLE__;
 }
 )();
