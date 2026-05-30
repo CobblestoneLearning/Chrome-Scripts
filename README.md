@@ -15,20 +15,20 @@ The script catalog below is regenerated automatically by GitHub Actions on every
 Add an `OPENAI_API_KEY` repository secret (Settings → Secrets and variables → Actions). Optionally override the model with an `OPENAI_MODEL` repo variable. The workflow uses the default `GITHUB_TOKEN` to commit the regenerated README, so no PAT is needed unless branch protection rules block bot pushes to `main`.
 
 <!-- AUTO-GENERATED:START — do not edit below this line -->
-<!-- Last generated: 2026-05-29T16:56:43.671Z -->
+<!-- Last generated: 2026-05-30T11:25:21.876Z -->
 
 ## Scripts
 
 ### `better-sg-reports.js`
 
-This script creates an interactive dashboard for analyzing site and server performance metrics on SiteGround, including CPU, memory, and request data. It helps users identify issues, validate fixes, and generate branded PDF or CSV reports directly from the browser.
+This script provides a comprehensive browser-based dashboard for analyzing SiteGround hosting metrics, including CPU, memory, and request data. It can generate detailed health reports, site overviews, and before/after change analyses with visual charts and export options, helping users track and demonstrate the impact of optimizations.
 
 **Usage**
 
-- Open the dashboard page on SiteGround with the monitoring data available.
-- Run the bookmarklet or userscript on the page to initialize the dashboard view.
-- Use the provided UI controls to switch tabs, toggle explain mode, exclude sites, compare before/after periods, and generate reports.
-- Ensure your browser allows pop-ups, and wait for the page to load the data before interacting.
+- Open the dashboard on a SiteGround hosting account page after capturing relevant data.
+- Run the script directly in the browser console or use as a bookmarklet to initialize the interface.
+- Ensure you have sufficient captured data; the dashboard waits for multiple API reports before enabling full features.
+- Interact with the tabs and controls to view specific metrics, generate reports, or export raw data and summaries.
 
 **jsDelivr URL** (paste into DevTools Console, or load via the bookmarklet below):
 
