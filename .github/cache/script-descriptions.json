@@ -1,13 +1,13 @@
 {
   "better-sg-reports.js": {
-    "description": "This script creates an interactive dashboard for analyzing site and server performance metrics on SiteGround, including CPU, memory, and request data. It helps users identify issues, validate fixes, and generate branded PDF or CSV reports directly from the browser.",
+    "description": "This script provides a comprehensive browser-based dashboard for analyzing SiteGround hosting metrics, including CPU, memory, and request data. It can generate detailed health reports, site overviews, and before/after change analyses with visual charts and export options, helping users track and demonstrate the impact of optimizations.",
     "usage": [
-      "Open the dashboard page on SiteGround with the monitoring data available.",
-      "Run the bookmarklet or userscript on the page to initialize the dashboard view.",
-      "Use the provided UI controls to switch tabs, toggle explain mode, exclude sites, compare before/after periods, and generate reports.",
-      "Ensure your browser allows pop-ups, and wait for the page to load the data before interacting."
+      "Open the dashboard on a SiteGround hosting account page after capturing relevant data.",
+      "Run the script directly in the browser console or use as a bookmarklet to initialize the interface.",
+      "Ensure you have sufficient captured data; the dashboard waits for multiple API reports before enabling full features.",
+      "Interact with the tabs and controls to view specific metrics, generate reports, or export raw data and summaries."
     ],
-    "hash": "117fb3591427d05da693e6eec04c742bde095e2c3825da1233b9bb5491344ae6"
+    "hash": "f764dbb302106faedefb1bf68c026c5f8a86906a5546fef140c97fc6d349d554"
   },
   "ie-extractor.js": {
     "description": "This script creates a floating image extractor panel on any page, which collects all images, detects if they are from iStock, and displays them in a sortable table. You can filter images by filename, alt text, or iStock ID, select images, and download their files directly. It enhances image management without altering page content permanently.",
