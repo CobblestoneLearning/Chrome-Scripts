@@ -15,20 +15,20 @@ The script catalog below is regenerated automatically by GitHub Actions on every
 Add an `OPENAI_API_KEY` repository secret (Settings → Secrets and variables → Actions). Optionally override the model with an `OPENAI_MODEL` repo variable. The workflow uses the default `GITHUB_TOKEN` to commit the regenerated README, so no PAT is needed unless branch protection rules block bot pushes to `main`.
 
 <!-- AUTO-GENERATED:START — do not edit below this line -->
-<!-- Last generated: 2026-05-30T11:25:21.876Z -->
+<!-- Last generated: 2026-06-01T21:39:06.451Z -->
 
 ## Scripts
 
 ### `better-sg-reports.js`
 
-This script provides a comprehensive browser-based dashboard for analyzing SiteGround hosting metrics, including CPU, memory, and request data. It can generate detailed health reports, site overviews, and before/after change analyses with visual charts and export options, helping users track and demonstrate the impact of optimizations.
+This script creates a comprehensive, branded dashboard for analyzing SiteGround server and site performance metrics, focusing on CPU, memory, and request data. It helps users visualize trends, detect issues, and evaluate the impact of fixes through various charts, reports, and statistical tests.
 
 **Usage**
 
-- Open the dashboard on a SiteGround hosting account page after capturing relevant data.
-- Run the script directly in the browser console or use as a bookmarklet to initialize the interface.
-- Ensure you have sufficient captured data; the dashboard waits for multiple API reports before enabling full features.
-- Interact with the tabs and controls to view specific metrics, generate reports, or export raw data and summaries.
+- Inject the bookmarklet or userscript while logged into SiteGround's Admin Panel on the relevant pages.
+- Ensure all API reports are loaded by navigating through the Statistics panels, as the script intercepts fetch calls to gather data.
+- Open the dashboard via the provided interface buttons, which wait until enough data has been captured or allow you to override this.
+- Use the report and export options to generate printable PDFs or CSV summaries for sharing or further analysis.
 
 **jsDelivr URL** (paste into DevTools Console, or load via the bookmarklet below):
 

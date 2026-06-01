@@ -1,13 +1,13 @@
 {
   "better-sg-reports.js": {
-    "description": "This script provides a comprehensive browser-based dashboard for analyzing SiteGround hosting metrics, including CPU, memory, and request data. It can generate detailed health reports, site overviews, and before/after change analyses with visual charts and export options, helping users track and demonstrate the impact of optimizations.",
+    "description": "This script creates a comprehensive, branded dashboard for analyzing SiteGround server and site performance metrics, focusing on CPU, memory, and request data. It helps users visualize trends, detect issues, and evaluate the impact of fixes through various charts, reports, and statistical tests.",
     "usage": [
-      "Open the dashboard on a SiteGround hosting account page after capturing relevant data.",
-      "Run the script directly in the browser console or use as a bookmarklet to initialize the interface.",
-      "Ensure you have sufficient captured data; the dashboard waits for multiple API reports before enabling full features.",
-      "Interact with the tabs and controls to view specific metrics, generate reports, or export raw data and summaries."
+      "Inject the bookmarklet or userscript while logged into SiteGround's Admin Panel on the relevant pages.",
+      "Ensure all API reports are loaded by navigating through the Statistics panels, as the script intercepts fetch calls to gather data.",
+      "Open the dashboard via the provided interface buttons, which wait until enough data has been captured or allow you to override this.",
+      "Use the report and export options to generate printable PDFs or CSV summaries for sharing or further analysis."
     ],
-    "hash": "f764dbb302106faedefb1bf68c026c5f8a86906a5546fef140c97fc6d349d554"
+    "hash": "dbdb92b60ccb55acde10bfaf33c0552793e8953b277874ec2046dc66264ced2d"
   },
   "ie-extractor.js": {
     "description": "This script creates a floating image extractor panel on any page, which collects all images, detects if they are from iStock, and displays them in a sortable table. You can filter images by filename, alt text, or iStock ID, select images, and download their files directly. It enhances image management without altering page content permanently.",
