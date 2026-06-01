@@ -1,6 +1,10 @@
 ( () => {
     'use strict';
 
+    // ── Version / release ───────────────────────────────────────────────────────
+    const SGD_VERSION = '2.1.0';
+    const SGD_RELEASE = '2026-06-01';
+
     // Cobblestone Learning brand assets — see ~/.claude/skills/cobblestone-brand
     // Logo is a lightweight inline-SVG wordmark (brand cyan/blue, Montserrat fallback) so the
     // dashboard stays on-brand and self-contained without the old ~230KB base64 payload.
@@ -9014,6 +9018,8 @@ window.addEventListener('load', function() {
     ;
 
     const run = async () => {
+        // Version banner on load — brand-coloured pill in the console (Cobblestone blue/cyan/dark).
+        console.log(`%c Better SG Reports %c v${SGD_VERSION} %c ${SGD_RELEASE} `, 'background:#0074B4;color:#fff;font-weight:700;border-radius:3px 0 0 3px;padding:2px 7px', 'background:#27AAE1;color:#fff;font-weight:700;padding:2px 7px', 'background:#3D3D3D;color:#fff;padding:2px 7px;border-radius:0 3px 3px 0');
         installInterceptor();
         const root = setupRoot();
         bindEvents(root);
@@ -9049,7 +9055,7 @@ window.addEventListener('load', function() {
         buildData, buildCmp, baseline, classifyVsBaseline, linReg, projectCross, welchT, studentTp, oneSampleT, lag1Acf,
         percentile, pctCh, avg, avgAll, focusSeries, focusNarrative, focusMetric, focusRanking, interpret,
         resolveCtrl, rankByMetric, categorise, tsDate, addDays, renderTab, renderCmpOut,
-        buildActivityMatrix, buildCoreHourMatrix, getCoreLimit, CFG, CAP, S
+        buildActivityMatrix, buildCoreHourMatrix, getCoreLimit, SGD_VERSION, SGD_RELEASE, CFG, CAP, S
     };
     if (typeof window !== 'undefined') {
         // Only expose internals when a harness explicitly opts in (window.__SGD_TEST__ set
