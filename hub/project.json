@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "name": "Chrome Scripts",
+  "tagline": "Adds extra tools to any web page you open, through bookmarks you click in your browser.",
+  "summary": "A public collection of browser tools that work as bookmarklets: bookmarks that run a tool on the page you are viewing. Each bookmarklet loads the latest copy of its tool from this repository.",
+  "purpose": "tools",
+  "kind": "scripts",
+  "helps": [
+    "our team"
+  ],
+  "works_with": [
+    "SiteGround",
+    "iStock"
+  ],
+  "runs_on": [],
+  "status": "live",
+  "features": [
+    "Turn SiteGround's hosting statistics into a clearer dashboard with charts, reports and exports.",
+    "List every image on a page, then search by file name, description or stock photo number.",
+    "Open stock photos on iStock, or download the images you select.",
+    "Install a tool once as a bookmark that always loads its latest copy."
+  ],
+  "owner": "Bryan Hurley",
+  "updated": "2026-11-20"
+}
