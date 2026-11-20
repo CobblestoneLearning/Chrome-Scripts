@@ -1,13 +1,13 @@
 {
   "better-sg-reports.js": {
-    "description": "This script creates a comprehensive, branded dashboard for analyzing SiteGround server and site performance metrics, focusing on CPU, memory, and request data. It helps users visualize trends, detect issues, and evaluate the impact of fixes through various charts, reports, and statistical tests.",
+    "description": "Intercepts SiteGround Site Tools statistics responses and builds an in-page Cobblestone-branded dashboard for server health, per-site CPU and execution usage, trends, and before/after fix analysis. It adds charts, alerts, comparison controls, CSV and raw-API exports, and print-ready reports, using captured SiteGround data rather than making a separate monitoring connection.",
     "usage": [
-      "Inject the bookmarklet or userscript while logged into SiteGround's Admin Panel on the relevant pages.",
-      "Ensure all API reports are loaded by navigating through the Statistics panels, as the script intercepts fetch calls to gather data.",
-      "Open the dashboard via the provided interface buttons, which wait until enough data has been captured or allow you to override this.",
-      "Use the report and export options to generate printable PDFs or CSV summaries for sharing or further analysis."
+      "Run it while logged into SiteGround Site Tools, then open Statistics views for CPU Seconds, Program Executions, CPU Core Usage, and Memory Usage so the script can capture their daily, hourly, and short-interval responses.",
+      "Click Open Dashboard in the waiting panel after at least CPU Seconds → Last Month and CPU Core Usage → Last Month are captured; additional views enable execution, memory, hourly, and live-barometer features.",
+      "The script injects a full-screen dashboard and intercepts `fetch` requests to `uapi.siteground.com`; it also loads ECharts from cdnjs.cloudflare.com and may require allowing that external script.",
+      "Before/After comparison can prompt for custom site groups, while settings, exclusions, history, and selected sites are stored in `localStorage`; report generation opens a new window and triggers the browser print dialog."
     ],
-    "hash": "dbdb92b60ccb55acde10bfaf33c0552793e8953b277874ec2046dc66264ced2d"
+    "hash": "b1db524ce8c547ff6d320b80b580641b1fd4664607d743839950babd865e01eb"
   },
   "ie-extractor.js": {
     "description": "This script creates a floating image extractor panel on any page, which collects all images, detects if they are from iStock, and displays them in a sortable table. You can filter images by filename, alt text, or iStock ID, select images, and download their files directly. It enhances image management without altering page content permanently.",

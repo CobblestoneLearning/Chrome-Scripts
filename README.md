@@ -15,20 +15,20 @@ The script catalog below is regenerated automatically by GitHub Actions on every
 Add an `OPENAI_API_KEY` repository secret (Settings → Secrets and variables → Actions). Optionally override the model with an `OPENAI_MODEL` repo variable. The workflow uses the default `GITHUB_TOKEN` to commit the regenerated README, so no PAT is needed unless branch protection rules block bot pushes to `main`.
 
 <!-- AUTO-GENERATED:START — do not edit below this line -->
-<!-- Last generated: 2026-06-01T21:39:06.451Z -->
+<!-- Last generated: 2026-11-20T11:13:10.425Z -->
 
 ## Scripts
 
 ### `better-sg-reports.js`
 
-This script creates a comprehensive, branded dashboard for analyzing SiteGround server and site performance metrics, focusing on CPU, memory, and request data. It helps users visualize trends, detect issues, and evaluate the impact of fixes through various charts, reports, and statistical tests.
+Intercepts SiteGround Site Tools statistics responses and builds an in-page Cobblestone-branded dashboard for server health, per-site CPU and execution usage, trends, and before/after fix analysis. It adds charts, alerts, comparison controls, CSV and raw-API exports, and print-ready reports, using captured SiteGround data rather than making a separate monitoring connection.
 
 **Usage**
 
-- Inject the bookmarklet or userscript while logged into SiteGround's Admin Panel on the relevant pages.
-- Ensure all API reports are loaded by navigating through the Statistics panels, as the script intercepts fetch calls to gather data.
-- Open the dashboard via the provided interface buttons, which wait until enough data has been captured or allow you to override this.
-- Use the report and export options to generate printable PDFs or CSV summaries for sharing or further analysis.
+- Run it while logged into SiteGround Site Tools, then open Statistics views for CPU Seconds, Program Executions, CPU Core Usage, and Memory Usage so the script can capture their daily, hourly, and short-interval responses.
+- Click Open Dashboard in the waiting panel after at least CPU Seconds → Last Month and CPU Core Usage → Last Month are captured; additional views enable execution, memory, hourly, and live-barometer features.
+- The script injects a full-screen dashboard and intercepts `fetch` requests to `uapi.siteground.com`; it also loads ECharts from cdnjs.cloudflare.com and may require allowing that external script.
+- Before/After comparison can prompt for custom site groups, while settings, exclusions, history, and selected sites are stored in `localStorage`; report generation opens a new window and triggers the browser print dialog.
 
 **jsDelivr URL** (paste into DevTools Console, or load via the bookmarklet below):
 
