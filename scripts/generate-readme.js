@@ -28,10 +28,10 @@ const REQUEST_DELAY_MS = 250;
 // ---- OpenAI client ----------------------------------------------------------
 
 const client = new OpenAI(); // reads OPENAI_API_KEY
-// gpt-4.1-nano: 1M context, ~$0.10/1M input tokens. Cheaper than gpt-4o-mini
-// (which caps at 128K context and chokes on scripts above ~300KB). Override
-// via the OPENAI_MODEL repo variable if you want a beefier/cheaper model.
-const MODEL = process.env.OPENAI_MODEL ?? "gpt-4.1-nano";
+// gpt-5.6-luna: OpenAI's named replacement for gpt-4.1-nano, which was shut down on
+// 2026-10-23. Override with the OPENAI_MODEL repo variable (Settings > Secrets and
+// variables > Actions > Variables) when the next model change comes round.
+const MODEL = process.env.OPENAI_MODEL || "gpt-5.6-luna";
 
 const SYSTEM_PROMPT = `You document browser bookmarklets and userscripts for a public README.
 
@@ -99,7 +99,9 @@ async function describeScript(filename, source) {
         schema: OUTPUT_SCHEMA,
       },
     },
-    max_tokens: 1024,
+    // GPT-5 models reject max_tokens; max_completion_tokens also covers their reasoning,
+    // so leave room for it as well as the JSON.
+    max_completion_tokens: 4096,
   });
 
   const content = response.choices?.[0]?.message?.content;
