@@ -159,7 +159,7 @@
             key: 'control_group',
             title: 'Control Group',
             layman: 'A hand-picked set of unrelated sites to compare against. If they got quieter at the same time your target did, the fix didn\'t cause it — a quiet week did.',
-            technical: 'Selectable preset: Auto-top-5, "Unpatched" (your site list), LMS Core 4, Non-LMS. Frozen on first run with auto-mode so the comparison stays stable across re-renders.',
+            technical: 'Selectable preset: Auto-top-5, "Unpatched" and "LMS core" (site lists you enter once; this browser keeps them), Non-LMS. Frozen on first run with auto-mode so the comparison stays stable across re-renders.',
             whenItMatters: 'Sense-checking a single-site improvement. A target that drops 30% means nothing if the control also dropped 30%.',
             whereToFind: 'Before/After → "Control Avg Daily" card + green-dashed line on the main chart'
         }, {
@@ -287,10 +287,28 @@
     // visible when explain-mode is on. Returns empty string for unknown keys.
     const laymanSub = key => EXPLAIN[key] ? `<div class="layman-sub">${EXPLAIN[key]}</div>` : '';
 
+    // Named site groups live in this browser (localStorage), never in this file: the repo is public,
+    // so it must not name client sites. Choosing a group in "Compare Against" asks for its sites.
+    const siteGroup = (name, fallback) => {
+        try {
+            const v = JSON.parse(localStorage.getItem('sgd_group_' + name) || 'null');
+            return Array.isArray(v) ? v : fallback;
+        } catch (e) {
+            return fallback;
+        }
+    };
+    const editSiteGroup = (name, label) => {
+        const v = prompt(`Sites in "${label}": domains separated by commas. This browser keeps the list.`, siteGroup(name, []).join(', '));
+        if (v === null) return;
+        const list = v.split(/[\s,]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
+        try {
+            localStorage.setItem('sgd_group_' + name, JSON.stringify(list));
+        } catch (e) {}
+    };
     const CFG = {
         echartsUrl: 'https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.3/echarts.min.js',
-        lmsCore: ['client-site-b.example', 'client-site-a.example', 'lms.cobblestonelearning.com', 'client-site-c.example'],
-        unpatched: ['client-site-b.example', 'client-site-a.example'],
+        get lmsCore() { return siteGroup('lms_core', ['lms.cobblestonelearning.com']); },
+        get unpatched() { return siteGroup('unpatched', []); },
         defaultTarget: 'lms.cobblestonelearning.com',
         defaultFixDate: ( () => {
             const d = new Date();
@@ -317,7 +335,8 @@
     // - "network" — every other active site (broadest baseline, hardest to argue against)
     // - "smallest5" — peer with the long-tail sites (useful for low-traffic targets)
     // - "cobble" — every *.cobblestonelearning.com (same brand, often shared codebase)
-    // - "unpatched" / "lms_core" / "non_lms" — Cobblestone-specific hardcoded groups
+    // - "unpatched" / "lms_core" — named groups whose sites you enter once (kept in this browser);
+    //   "non_lms" — the most active sites outside the LMS core group
     // - "custom" — picker modal (user chooses N specific sites)
     const CTRL_PRESETS = {
         auto: 'Auto (Top 5)',
@@ -328,7 +347,7 @@
         network: 'Whole Network (every other active site)',
         cobble: 'Cobblestone domains (*.cobblestonelearning.com)',
         unpatched: 'Unpatched (your site list)',
-        lms_core: 'LMS Core 4',
+        lms_core: 'LMS core (your site list)',
         non_lms: 'Non-LMS',
         custom: 'Custom — pick sites…'
     };
@@ -5123,6 +5142,9 @@ svg.spark{display:inline-block;vertical-align:middle}
         document.getElementById('cmp-ctrl')?.addEventListener('change', e => {
             if (e.target.value === 'custom') {
                 openCustomCtrlPicker(data, rerun);
+            } else if (e.target.value === 'unpatched' || e.target.value === 'lms_core') {
+                editSiteGroup(e.target.value, CTRL_PRESETS[e.target.value]);
+                rerun();
             } else {
                 rerun();
             }
