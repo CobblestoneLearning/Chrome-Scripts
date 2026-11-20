@@ -20,6 +20,7 @@
     "Open stock photos on iStock, or download the images you select.",
     "Install a tool once as a bookmark that always loads its latest copy."
   ],
+  "no_demo": "Bookmarklets that run inside SiteGround Site Tools. Better SiteGround Reports has a demo of the reports bookmarklet.",
   "owner": "Bryan Hurley",
   "updated": "2026-11-20"
 }
